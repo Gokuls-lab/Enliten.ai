@@ -8,6 +8,8 @@ import {
   BookOpen,
   History,
   Home,
+  Newspaper,
+  NotepadText,
   User
 } from 'lucide-react-native';
 import React from 'react';
@@ -138,6 +140,20 @@ export default function TabLayout() {
           title: 'Notes',
           tabBarIcon: ({ size, color }) => (
             <BookOpen
+              size={size}
+              color={color}
+              strokeWidth={2}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="news"
+        options={{
+          title: 'News',
+          tabBarIcon: ({ size, color }) => (
+            <NotepadText
               size={size}
               color={color}
               strokeWidth={2}
