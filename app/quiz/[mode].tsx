@@ -70,7 +70,7 @@ export default function QuizScreen() {
   const [subjectOpen, setSubjectOpen] = useState(false);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [subjectItems, setSubjectItems] = useState<{ label: string, value: string }[]>([]);
-  const { mode } = useLocalSearchParams<{ mode: string }>();
+  const { mode, subject_id } = useLocalSearchParams<{ mode: string, subject_id?: string }>();
   const { user } = useAuth();
   const { isPro: isPremium } = useRevenueCat(); // Renamed to match existing logic
 
@@ -128,6 +128,10 @@ export default function QuizScreen() {
       setShowBuildQuizModal(true);
       setBuildQuizStarted(false);
       setLoading(false);
+      
+      if (subject_id) {
+        setSelectedSubjects([subject_id]);
+      }
 
       const fetchDomains = async () => {
         if (!exam) return;
@@ -155,7 +159,88 @@ export default function QuizScreen() {
 
       fetchDomains();
     }
-  }, [mode, exam]);
+
+    // notes_quiz mode: auto-start immediately with subject questions
+    if (mode === 'notes_quiz' && subject_id && exam) {
+      setShowBuildQuizModal(false);
+      setBuildQuizStarted(true);
+      setLoading(true);
+
+      const autoStartNotesQuiz = async () => {
+        try {
+          let query = supabase
+            .from('questions')
+            .select(`
+              id,
+              question_text,
+              question_type,
+              explanation,
+              difficulty,
+              domain,
+              subject_id,
+              is_premium,
+              question_options(*)
+            `)
+            .eq('subject_id', subject_id);
+
+          if (exam?.id) {
+            query = query.eq('exam', exam.id);
+          }
+
+          query = applyPremiumFilter(query).limit(300);
+
+          const { data, error } = await query;
+          if (error) throw error;
+          if (!data || data.length === 0) {
+            Alert.alert('No Questions', 'No questions available for this subject.');
+            setQuestions([]);
+            setLoading(false);
+            return;
+          }
+
+          // Exclude previously correctly answered questions
+          let excludeCorrectIds = new Set<string>();
+          if (user?.id) {
+            const { data: correctData } = await supabase
+              .from('user_answers')
+              .select('question_id')
+              .eq('user_id', user.id)
+              .eq('is_correct', true);
+            if (correctData) {
+              excludeCorrectIds = new Set(correctData.map((a: any) => a.question_id));
+            }
+          }
+
+          const filtered = (data as any[]).filter(q => !excludeCorrectIds.has(q.id));
+
+          // Shuffle
+          for (let i = filtered.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
+          }
+
+          const selected = filtered.slice(0, 20); // 20 questions max
+          const mappedQuestions = selected.map(q => ({
+            ...q,
+            question_type: q.question_type || 'multiple_choice',
+            is_premium: q.is_premium,
+            options: (q.question_options || []).sort((a: any, b: any) =>
+              (a.option_letter || '').localeCompare(b.option_letter || '')
+            ),
+          }));
+
+          setQuestions(mappedQuestions as Question[]);
+          setTimeLeft(null); // No timer for notes quiz
+        } catch (err) {
+          console.error('Error fetching notes quiz questions:', err);
+          Alert.alert('Error', 'Could not fetch questions for this subject.');
+        }
+        setLoading(false);
+      };
+
+      autoStartNotesQuiz();
+    }
+  }, [mode, exam, subject_id]);
 
   // Handler for starting custom quiz
   const handleStartBuildQuiz = async () => {
@@ -186,6 +271,9 @@ export default function QuizScreen() {
       }
       if (selectedDomains && selectedDomains.length > 0) {
         query = query.in('domain', selectedDomains);
+      }
+      if (selectedSubjects && selectedSubjects.length > 0) {
+        query = query.in('subject_id', selectedSubjects);
       }
 
       // Fetch a large pool to ensure randomness after shuffling
@@ -276,7 +364,7 @@ export default function QuizScreen() {
 
 
   const fetchQuestions = useCallback(async () => {
-    if (mode === 'custom') return; // handled in build quiz modal
+    if (mode === 'custom' || mode === 'notes_quiz') return; // handled separately
     if (!exam) return;
     setLoading(true);
 
@@ -731,6 +819,7 @@ export default function QuizScreen() {
         level_up: 'level_up',
         missed: 'missed',
         custom: 'custom',
+        notes_quiz: 'notes_quiz',
         daily: 'daily',
         weakest: 'weakest',
       };

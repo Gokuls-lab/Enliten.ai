@@ -16,10 +16,12 @@ import {
   Modal,
   Image,
   Linking,
+  Animated as RNAnimated,
 } from 'react-native';
+import LottieView from 'lottie-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import Svg, {
   Path,
   Defs,
@@ -53,7 +55,8 @@ import {
   ImageIcon,
   FileUp,
   FileText,
-  Loader2
+  Loader2,
+  Globe
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
@@ -61,14 +64,18 @@ import Animated, {
   withTiming,
   withRepeat,
   withSequence,
+  cancelAnimation,
   FadeIn,
   FadeOut,
   Easing
 } from 'react-native-reanimated';
 import { useTheme, ThemeColors } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase'; // Assuming standard supabase client location
+import { useExam } from '@/contexts/ExamContext';
+import { supabase } from '@/lib/supabase';
+import { updateProgress } from '@/lib/progress';
 import Markdown from 'react-native-markdown-display';
+import { API_BASE_URL } from '@/lib/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -117,6 +124,123 @@ const EnlitenCoreIcon = ({ size = 64 }: { size?: number }) => (
     />
   </Svg>
 );
+
+// ────────────────────────────────────────────────────────────────────────────
+// CLAUDE-LIKE LOADING WAVE (8-point asterisk spinner)
+// ────────────────────────────────────────────────────────────────────────────
+const STREAMING_PHRASES = [
+  // --- Quick / One-Word Vibe ---
+  'Thinking...',
+  'Reviewing...',
+  'Analyzing...',
+  'Solving...',
+  'Simplifying...',
+  'Preparing...',
+  'Drafting...',
+  'Brainstorming...',
+  'Synthesizing...',
+  'Decoding...',
+
+  // --- Deep Learning & Tutoring Action ---
+  'Analyzing the question...',
+  'Reviewing the lesson...',
+  'Breaking it down...',
+  'Connecting the dots...',
+  'Formulating the explanation...',
+  'Simplifying the concept...',
+  'Checking the study guide...',
+  'Finding perfect examples...',
+  'Structuring the steps...',
+  'Mapping the concepts...',
+
+  // --- Creator & Studio Mindset ---
+  'Planning the breakdown...',
+  'Building the response...',
+  'Orchestrating the details...',
+  'Refining the logic...',
+  'Crafting the answer...',
+  'Polishing the takeaway...'
+];
+
+export const ClaudeLoadingWave = ({ size = 24, color = '#8B5CF6' }: { size?: number; color?: string }) => {
+  const rotation = useSharedValue(0);
+  const scaleVal = useSharedValue(1);
+
+  useEffect(() => {
+    rotation.value = withRepeat(withTiming(360, { duration: 1500, easing: Easing.linear }), -1, false);
+    scaleVal.value = withRepeat(
+      withSequence(
+        withTiming(0.65, { duration: 750, easing: Easing.ease }),
+        withTiming(1, { duration: 750, easing: Easing.ease }),
+      ),
+      -1,
+      true,
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { rotate: `${rotation.value}deg` },
+      { scale: scaleVal.value },
+    ],
+  }));
+
+  return (
+    <Animated.View style={[{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }, animatedStyle]}>
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path d="M12 2v4" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M12 18v4" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M4.93 4.93l2.83 2.83" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M16.24 16.24l2.83 2.83" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M2 12h4" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M18 12h4" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M4.93 19.07l2.83-2.83" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M16.24 7.76l2.83-2.83" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+      </Svg>
+    </Animated.View>
+  );
+};
+
+export function AnimatedStreamingText({ color = '#8B5CF6' }: { color?: string }) {
+  const [index, setIndex] = useState(0);
+  const fadeAnim = useRef(new RNAnimated.Value(1)).current;
+
+  useEffect(() => {
+    const wordInterval = setInterval(() => {
+      RNAnimated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => {
+        setIndex((prev) => {
+          let next;
+          do {
+            next = Math.floor(Math.random() * STREAMING_PHRASES.length);
+          } while (next === prev);
+          return next;
+        });
+        RNAnimated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 3000);
+
+    return () => clearInterval(wordInterval);
+  }, []);
+
+  return (
+    <RNAnimated.Text
+      style={[
+        { color, fontSize: 10, fontWeight: 'bold', letterSpacing: 1, textTransform: 'uppercase' },
+        { opacity: fadeAnim },
+      ]}
+    >
+      {STREAMING_PHRASES[index]}
+    </RNAnimated.Text>
+  );
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // SOURCE FAVICON COMPONENT (Claude-style)
@@ -360,6 +484,9 @@ interface GenerativeQuizCardProps {
   setQuizSubmissions: React.Dispatch<React.SetStateAction<Record<number, { selectedAnswers: Record<number, number>; submitted: boolean }>>>;
   setIsTyping: React.Dispatch<React.SetStateAction<boolean>>;
   setMessages: React.Dispatch<React.SetStateAction<Array<{ sender: 'user' | 'ai'; text: string }>>>;
+  user?: any;
+  convoId?: string | null;
+  examId?: string | null;
 }
 
 const GenerativeQuizCard = ({
@@ -371,7 +498,10 @@ const GenerativeQuizCard = ({
   quizSubmissions,
   setQuizSubmissions,
   setIsTyping,
-  setMessages
+  setMessages,
+  user,
+  convoId,
+  examId
 }: GenerativeQuizCardProps) => {
   const submission = quizSubmissions[messageIndex] || { selectedAnswers: {}, submitted: false };
   const { selectedAnswers, submitted } = submission;
@@ -383,6 +513,62 @@ const GenerativeQuizCard = ({
       ...prev,
       [messageIndex]: { ...submission, selectedAnswers: updatedAnswers }
     }));
+  };
+
+  const saveQuizToDB = async (score: number) => {
+    if (!user) return;
+    try {
+      const aiQuestions = data.questions.map(q => ({
+        question: q.question,
+        options: q.options,
+        correctIndex: q.correctIndex,
+        explanation: q.explanation,
+      }));
+      const aiAnswers = Object.entries(selectedAnswers).map(([qIdx, optIdx]) => ({
+        questionIndex: parseInt(qIdx),
+        selectedOptionIndex: optIdx as number,
+        isCorrect: (optIdx as number) === data.questions[parseInt(qIdx)].correctIndex,
+      }));
+
+      // Compute quiz_order: count existing AI quiz sessions for this thread
+      let quizOrder = 0;
+      if (convoId) {
+        const { data: existingSessions } = await supabase
+          .from('quiz_sessions')
+          .select('id')
+          .eq('chat_session_id', convoId)
+          .eq('quiz_type', 'ai-mentor');
+        quizOrder = existingSessions?.length || 0;
+      }
+
+      const { error: insertError } = await supabase.from('quiz_sessions').insert({
+        user_id: user.id,
+        quiz_type: 'ai-mentor',
+        score,
+        total_questions: data.questions.length,
+        time_taken_seconds: null,
+        completed_at: new Date().toISOString(),
+        ai_questions: aiQuestions,
+        ai_answers: aiAnswers,
+        chat_session_id: convoId || null,
+        quiz_order: quizOrder,
+        exam_id: examId || null,
+      });
+
+      if (insertError) {
+        console.error('Error saving AI quiz to DB:', insertError);
+        return;
+      }
+
+      // Update user progress like regular quiz modes
+      await updateProgress(user.id, {
+        questionsAnswered: data.questions.length,
+        correctAnswers: score,
+        timeTaken: 0,
+      });
+    } catch (err) {
+      console.error('Error saving AI quiz to DB:', err);
+    }
   };
 
   const handleSubmit = () => {
@@ -399,14 +585,17 @@ const GenerativeQuizCard = ({
       [messageIndex]: { ...submission, submitted: true }
     }));
 
+    // Calculate score and save to DB
+    let correctCount = 0;
+    data.questions.forEach((q, idx) => {
+      if (selectedAnswers[idx] === q.correctIndex) {
+        correctCount++;
+      }
+    });
+    saveQuizToDB(correctCount);
+
     setIsTyping(true);
     setTimeout(() => {
-      let correctCount = 0;
-      data.questions.forEach((q, idx) => {
-        if (selectedAnswers[idx] === q.correctIndex) {
-          correctCount++;
-        }
-      });
       const percent = Math.round((correctCount / data.questions.length) * 100);
 
       let feedback = '';
@@ -1170,11 +1359,172 @@ const GenerativeTimelineCard = ({ data, colors, isDark, styles }: GenerativeTime
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+// MEMOIZED INPUT BAR — only re-renders when its own props change
+// ────────────────────────────────────────────────────────────────────────────
+const getFileIconLocal = (mimeType: string) => {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (mimeType.includes('word') || mimeType.includes('document')) return 'doc';
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return 'ppt';
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return 'xls';
+  return 'file';
+};
+
+const getFileIconColorLocal = (mimeType: string) => {
+  if (mimeType.startsWith('image/')) return '#38BDF8';
+  if (mimeType === 'application/pdf') return '#EF4444';
+  if (mimeType.includes('word') || mimeType.includes('document')) return '#3B82F6';
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '#F59E0B';
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return '#10B981';
+  return '#818CF8';
+};
+
+const formatFileSizeLocal = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+};
+
+interface ChatInputBarProps {
+  inputText: string;
+  setInputText: (t: string) => void;
+  handleSend: (msg?: string) => void;
+  setShowAttachModal: (v: boolean) => void;
+  hasAttachments: boolean;
+  pendingAttachments: any[];
+  handleRemoveAttachment: (i: number) => void;
+  allUploaded: boolean;
+  isUploading: boolean;
+  colors: ThemeColors;
+  isDark: boolean;
+  insets: { bottom: number };
+  androidInputRef?: React.RefObject<TextInput | null>;
+  webSearchEnabled: boolean;
+  setWebSearchEnabled: (v: boolean) => void;
+}
+
+const ChatInputBar = React.memo(({
+  inputText,
+  setInputText,
+  handleSend,
+  setShowAttachModal,
+  hasAttachments,
+  pendingAttachments,
+  handleRemoveAttachment,
+  allUploaded,
+  isUploading,
+  colors,
+  isDark,
+  insets,
+  androidInputRef,
+  webSearchEnabled,
+  setWebSearchEnabled,
+}: ChatInputBarProps) => {
+  return (
+    <>
+      {hasAttachments && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10, paddingHorizontal: 4 }} contentContainerStyle={{ gap: 10 }}>
+          {pendingAttachments.map((att: any, idx: number) => (
+            <View key={idx} style={{ position: 'relative' }}>
+              {att.type.startsWith('image/') ? (
+                <View style={{ width: 100, height: 100, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? '#333' : '#DDD' }}>
+                  <Image source={{ uri: att.uri }} style={{ width: 100, height: 100 }} resizeMode="cover" />
+                  {att.status === 'uploading' && (
+                    <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', borderRadius: 14 }}>
+                      <ActivityIndicator size="small" color="#818CF8" />
+                    </View>
+                  )}
+                  {att.status === 'done' && (
+                    <View style={{ position: 'absolute', bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>✓</Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#1A1A2E' : '#F0F0FF', borderRadius: 14, padding: 10, gap: 8, borderWidth: 1, borderColor: isDark ? '#2A2A3E' : '#E0E0F0', minWidth: 160 }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: getFileIconColorLocal(att.type), alignItems: 'center', justifyContent: 'center' }}>
+                    {att.status === 'uploading' ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <FileText size={20} color="#FFF" />
+                    )}
+                  </View>
+                  <View style={{ flex: 1, maxWidth: 120 }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{att.name}</Text>
+                    <Text style={{ color: colors.subText, fontSize: 11, marginTop: 1 }}>
+                      {formatFileSizeLocal(att.size)}{att.status === 'uploading' ? ' Uploading...' : att.status === 'done' ? '' : att.status === 'error' ? ' Failed' : ''}
+                    </Text>
+                  </View>
+                </View>
+              )}
+              <TouchableOpacity
+                onPress={() => handleRemoveAttachment(idx)}
+                style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? '#333' : '#999', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
+              >
+                <X size={12} color="#FFF" strokeWidth={3} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        backgroundColor: colors.inputBg,
+        width: '100%',
+        borderRadius: 28,
+        paddingHorizontal: 16,
+        minHeight: 56,
+        maxHeight: 140,
+        paddingVertical: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: isDark ? 0.3 : 0.08,
+        shadowRadius: 8,
+        elevation: 5,
+      }}>
+        <TouchableOpacity style={{ marginRight: 12, marginBottom: 10 }} onPress={() => setShowAttachModal(true)}>
+          <Plus size={22} color={colors.subText} strokeWidth={2} />
+        </TouchableOpacity>
+        <TextInput ref={androidInputRef} style={{ flex: 1, color: colors.text, fontSize: 16, maxHeight: 110, paddingVertical: 8, textAlignVertical: 'center' }} placeholder="Ask AI Mentor" placeholderTextColor={colors.subText} value={inputText} onChangeText={setInputText} multiline scrollEnabled />
+        {(inputText.trim().length > 0 || allUploaded) ? (
+          <TouchableOpacity
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', opacity: isUploading ? 0.4 : 1, marginBottom: 10 }}
+            onPress={() => handleSend()}
+            disabled={isUploading}
+          >
+            <Send size={20} color="#FFFFFF" strokeWidth={2} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10 }}>
+            <TouchableOpacity onPress={() => setWebSearchEnabled(!webSearchEnabled)}>
+              <Globe size={20} color={webSearchEnabled ? colors.primary : colors.subText} strokeWidth={webSearchEnabled ? 2.5 : 2} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Alert.alert('Voice Input', 'Voice mode is coming soon in the next update!')}><Mic size={20} color={colors.subText} strokeWidth={2} /></TouchableOpacity>
+            <TouchableOpacity style={{
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: isDark ? '#1E2B4B' : '#EEF2FF',
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3,
+            }} onPress={() => Alert.alert('Sound Wave', 'Voice interactive session starting soon!')}>
+              <View style={{ width: 2.2, height: 10, backgroundColor: isDark ? '#60A5FA' : colors.primary, borderRadius: 1 }} />
+              <View style={{ width: 2.2, height: 18, backgroundColor: isDark ? '#60A5FA' : colors.primary, borderRadius: 1 }} />
+              <View style={{ width: 2.2, height: 14, backgroundColor: isDark ? '#60A5FA' : colors.primary, borderRadius: 1 }} />
+              <View style={{ width: 2.2, height: 8, backgroundColor: isDark ? '#60A5FA' : colors.primary, borderRadius: 1 }} />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </>
+  );
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ────────────────────────────────────────────────────────────────────────────
 // Helper function to parse multiple Gen UI blocks seamlessly inline
 const parseMessageBlocks = (text: string) => {
   const blocks: Array<{ type: string; content?: string; data?: any }> = [];
+  if (!text || typeof text !== 'string') return blocks;
   const regex = /<(QUIZ_UI|CHART_UI|TIMELINE_UI)>([\s\S]*?)<\/\1>/g;
   let lastIdx = 0;
   let match;
@@ -1223,6 +1573,7 @@ export default function AiMentorScreen() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const { exam } = useExam();
   const scrollViewRef = useRef<ScrollView>(null);
   const androidInputRef = useRef<TextInput>(null);
 
@@ -1241,6 +1592,8 @@ export default function AiMentorScreen() {
   const [quizSubmissions, setQuizSubmissions] = useState<Record<number, { selectedAnswers: Record<number, number>; submitted: boolean }>>({});
 
   const [threads, setThreads] = useState<Array<{ id: string; title: string; created_at: string }>>([]);
+  const [isLoadingThreads, setIsLoadingThreads] = useState(true);
+  const [isLoadingConvo, setIsLoadingConvo] = useState(false);
 
   // File attachment state
   interface AttachmentItem {
@@ -1260,9 +1613,62 @@ export default function AiMentorScreen() {
   const allUploaded = pendingAttachments.length > 0 && pendingAttachments.every(a => a.status === 'done');
   const hasAttachments = pendingAttachments.length > 0;
 
+  // ── Evaluation-to-Mentor bridge (navigated from evaluate-history) ──
+  const params = useLocalSearchParams<{ evaluation_id?: string; mode?: string }>();
+  const evaluationContextRef = useRef<any>(null);
+  const autoSendDoneRef = useRef(false);
+  const handleSendRef = useRef<any>(null);
+  useEffect(() => { handleSendRef.current = handleSend; });
+
+  const [showAutoSendOverlay, setShowAutoSendOverlay] = useState(false);
+  const [cyclingTextIndex, setCyclingTextIndex] = useState(0);
+  const textOpacity = useRef(new RNAnimated.Value(1)).current;
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+
+  const mcqTexts = [
+    'Generating Quiz...',
+    'Analyzing answer paper...',
+    'Hold tight...',
+    'Preparing questions...',
+    'Almost there...',
+  ];
+
+  const mentorTexts = [
+    'Analyzing Results...',
+    'Preparing Mentor...',
+    'Hold tight...',
+    'Reviewing evaluation...',
+    'Almost there...',
+  ];
+
+  const currentTexts = params.mode === 'mcq' ? mcqTexts : mentorTexts;
+
+  // Cycle through loading texts with fade animation
+  useEffect(() => {
+    if (!showAutoSendOverlay) return;
+
+    const interval = setInterval(() => {
+      RNAnimated.timing(textOpacity, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => {
+        setCyclingTextIndex((prev) => (prev + 1) % currentTexts.length);
+        RNAnimated.timing(textOpacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [showAutoSendOverlay, currentTexts.length, textOpacity]);
+
   // Load threads on mount
   useEffect(() => {
     if (!user) return;
+    setIsLoadingThreads(true);
     const fetchThreads = async () => {
       const { data } = await supabase
         .from('ai_chat_threads')
@@ -1270,15 +1676,89 @@ export default function AiMentorScreen() {
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setThreads(data);
+      setIsLoadingThreads(false);
     };
     fetchThreads();
   }, [user, convoId]);
+
+  // Single consolidated effect: fetch evaluation → set context → auto-send
+  // This avoids race conditions between separate effects and stale closures
+  useEffect(() => {
+    if (!params.evaluation_id || !user || autoSendDoneRef.current) return;
+    autoSendDoneRef.current = true;
+    setShowAutoSendOverlay(true);
+
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('main_evaluations')
+          .select('*')
+          .eq('id', params.evaluation_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!data) {
+          setShowAutoSendOverlay(false);
+          return;
+        }
+
+        // Build the pre-loaded attachment (already uploaded, status = done)
+        const att: AttachmentItem = {
+          uri: data.file_url,
+          name: data.file_name,
+          type: 'application/pdf',
+          size: 0,
+          uploadedUrl: data.file_url,
+          status: 'done' as const,
+          progress: 100,
+        };
+
+        // Set attachments for UI display
+        setPendingAttachments([att]);
+
+        // Set evaluation context for BOTH mentor and mcq modes
+        if (data.evaluation) {
+          evaluationContextRef.current = {
+            file_name: data.file_name,
+            overall_score: data.awarded_marks !== null && data.total_marks !== null
+              ? `${data.awarded_marks}/${data.total_marks}`
+              : 'N/A',
+            evaluation: data.evaluation,
+          };
+        }
+
+        const autoMessage = params.mode === 'mcq'
+          ? 'Generate a quiz based on the topics covered in this answer paper.'
+          : "Just take a look at this evaluation result, let's continue our conversation on this.";
+
+        // Build attachments payload directly — don't rely on state which may be stale
+        const directAttachments = [{
+          url: data.file_url,
+          name: data.file_name,
+          type: 'application/pdf',
+          size: 0,
+          storage_path: undefined as string | undefined,
+        }];
+
+        // Wait for next frame to ensure component is fully mounted
+        setTimeout(() => {
+          handleSendRef.current?.(autoMessage, directAttachments);
+        }, 500);
+      } catch (err) {
+        console.error('[EVAL_BRIDGE] Failed to load evaluation:', err);
+        autoSendDoneRef.current = false;
+        setShowAutoSendOverlay(false);
+      }
+    })();
+  }, [params.evaluation_id, user]);
 
   // Shared Animation Values
   const sidebarOffset = useSharedValue(-280);
   const starScale = useSharedValue(1);
 
-  // Keyboard height tracking for Android — uses Reanimated for seamless animation
+  // Keyboard height tracking for Android — hybrid: React state forces native layout recalc (fixes first-open),
+  // Reanimated shared value provides smooth 60fps animation on UI thread.
+  const [androidKeyboardHeight, setAndroidKeyboardHeight] = useState(0);
   const keyboardHeightAnim = useSharedValue(0);
   const animatedKeyboardStyle = useAnimatedStyle(() => ({
     paddingBottom: keyboardHeightAnim.value > 0 ? 8 : Math.max(insets.bottom, 12),
@@ -1289,25 +1769,25 @@ export default function AiMentorScreen() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
-      keyboardHeightAnim.value = withTiming(e.endCoordinates.height, {
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-      });
+      const h = e.endCoordinates?.height ?? 0;
+      if (h > 0) {
+        setAndroidKeyboardHeight(h);
+        keyboardHeightAnim.value = h;
+      }
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardHeight(0);
       keyboardHeightAnim.value = withTiming(0, {
         duration: 220,
         easing: Easing.out(Easing.cubic),
       });
     });
-    // Focus AFTER listeners are registered to avoid missing the first keyboardDidShow
-    const focusTimer = setTimeout(() => {
-      androidInputRef.current?.focus();
-    }, 150);
     return () => {
       showSub.remove();
       hideSub.remove();
-      clearTimeout(focusTimer);
     };
   }, []);
 
@@ -1566,14 +2046,16 @@ export default function AiMentorScreen() {
     setPendingAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleSend = async () => {
-    if (inputText.trim() === '' && !hasAttachments) return;
-    if (isUploading) return; // Block send while uploading
-
-    const userMsg = inputText.trim() || (hasAttachments ? 'Attached file(s)' : '');
-    const sentAttachments = pendingAttachments
+  const handleSend = async (customMessage?: string, prebuiltAttachments?: Array<{ url: string; name: string; type: string; size: number; storage_path?: string }>) => {
+    const userMsg = (typeof customMessage === 'string' ? customMessage : inputText.trim());
+    // Use pre-built attachments if provided (from auto-send), otherwise derive from state
+    const sentAttachments = prebuiltAttachments || pendingAttachments
       .filter(a => a.status === 'done' && a.uploadedUrl)
       .map(a => ({ url: a.uploadedUrl!, name: a.name, type: a.type, size: a.size, storage_path: a.storagePath }));
+    const hasAnyAttachments = sentAttachments.length > 0 || hasAttachments;
+
+    if (userMsg === '' && !hasAnyAttachments) return;
+    if (!prebuiltAttachments && isUploading) return;
 
     const newMsgs = [...messages, { sender: 'user' as const, text: userMsg, attachments: sentAttachments.length > 0 ? sentAttachments : undefined }];
     setMessages(newMsgs);
@@ -1585,13 +2067,14 @@ export default function AiMentorScreen() {
       let { data: { session } } = await supabase.auth.getSession();
       let token = session?.access_token;
       // const API_URL = 'https://enliten-admin.vercel.app/api/chat-ollama'
-      const API_URL = 'http://172.30.209.175:8080/api/chat-ollama';
+      const API_URL = `${API_BASE_URL}/api/chat-ollama`;
 
       // Construct request payload. If there is no active convoId, send user profile info as the session's first message.
       const payload: any = {
         message: userMsg,
         thread_id: convoId,
         attachments: sentAttachments.length > 0 ? sentAttachments : undefined,
+        webSearchEnabled,
       };
 
       if (!convoId && user) {
@@ -1602,8 +2085,15 @@ export default function AiMentorScreen() {
         };
       }
 
+      // Inject evaluation context for mentor mode (hidden from UI)
+      if (evaluationContextRef.current) {
+        payload.evaluation_context = evaluationContextRef.current;
+        evaluationContextRef.current = null;
+      }
+
       // Use XMLHttpRequest for SSE streaming support in React Native
       const xhr = new XMLHttpRequest();
+      xhr.timeout = 60000; // 60s timeout to prevent infinite loading on unreachable server
       xhr.open('POST', API_URL);
       xhr.setRequestHeader('Content-Type', 'application/json');
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
@@ -1640,6 +2130,7 @@ export default function AiMentorScreen() {
               if (!firstTokenReceived) {
                 firstTokenReceived = true;
                 setIsTyping(false); // Kill the typing dots
+                setShowAutoSendOverlay(false); // Hide loading overlay
                 // Insert the AI message for the first time WITH real text
                 setMessages(prev => [...prev, { sender: 'ai' as const, text: displayText, isStreaming: true }]);
               } else {
@@ -1650,6 +2141,19 @@ export default function AiMentorScreen() {
                   return updated;
                 });
               }
+            }
+
+            if (event.type === 'text_correction') {
+              // Server validated image URLs and sent corrected text
+              streamedRaw = event.content;
+              const displayText = stripThinkTags(streamedRaw);
+              setMessages(prev => {
+                const updated = [...prev];
+                if (updated[streamMsgIdx]) {
+                  updated[streamMsgIdx] = { ...updated[streamMsgIdx], text: displayText };
+                }
+                return updated;
+              });
             }
 
             if (event.type === 'done') {
@@ -1675,6 +2179,7 @@ export default function AiMentorScreen() {
                 return updated;
               });
               setIsTyping(false);
+              setShowAutoSendOverlay(false);
             }
           } catch (e) { /* skip malformed lines */ }
         }
@@ -1683,6 +2188,17 @@ export default function AiMentorScreen() {
       xhr.onload = () => {
         // Ensure isTyping is cleared even if 'done' event was missed
         setIsTyping(false);
+        if (xhr.status === 429) {
+          try {
+            const errRes = JSON.parse(xhr.responseText);
+            Alert.alert('Usage Limit Reached', errRes.error || 'Rate limit exceeded.');
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[streamMsgIdx] = { sender: 'ai' as const, text: 'You have reached your usage limit. Please check your settings.' };
+              return updated;
+            });
+          } catch (e) { }
+        }
       };
 
       xhr.onerror = async () => {
@@ -1706,6 +2222,7 @@ export default function AiMentorScreen() {
                 return updated;
               });
               setIsTyping(false);
+              setShowAutoSendOverlay(false);
             };
             retryXhr.send(JSON.stringify(payload));
             return;
@@ -1714,6 +2231,17 @@ export default function AiMentorScreen() {
         setMessages(prev => {
           const updated = [...prev];
           updated[streamMsgIdx] = { sender: 'ai' as const, text: 'Sorry, connection failed.' };
+          return updated;
+        });
+        setIsTyping(false);
+        setShowAutoSendOverlay(false);
+      };
+
+      xhr.ontimeout = () => {
+        console.error('[CHAT] XHR timeout — server unreachable at', API_URL);
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[streamMsgIdx] = { sender: 'ai' as const, text: 'Sorry, the request timed out. Please check your connection and try again.' };
           return updated;
         });
         setIsTyping(false);
@@ -1730,8 +2258,8 @@ export default function AiMentorScreen() {
   const handleLoadConvo = async (id: string) => {
     setConvoId(id);
     setIsSidebarOpen(false);
+    setIsLoadingConvo(true);
 
-    // Fetch messages for this thread
     const { data } = await supabase
       .from('ai_chat_messages')
       .select('*')
@@ -1739,7 +2267,7 @@ export default function AiMentorScreen() {
       .order('created_at', { ascending: true });
 
     if (data) {
-      setMessages(data.map((msg: any) => {
+      const parsedMessages = data.map((msg: any) => {
         let fq = msg.follow_up_questions;
         if (typeof fq === 'string') {
           try { fq = JSON.parse(fq); } catch (e) { }
@@ -1751,8 +2279,48 @@ export default function AiMentorScreen() {
           followUpQuestions: Array.isArray(fq) ? fq : [],
           attachments: Array.isArray(msg.attachments) ? msg.attachments : undefined,
         };
-      }));
+      });
+      setMessages(parsedMessages);
+
+      // Restore quiz submission state from DB
+      const { data: quizSessions } = await supabase
+        .from('quiz_sessions')
+        .select('id, quiz_order, ai_questions, ai_answers, score')
+        .eq('chat_session_id', id)
+        .eq('quiz_type', 'ai-mentor')
+        .order('quiz_order', { ascending: true });
+
+      if (quizSessions && quizSessions.length > 0) {
+        const restoredSubmissions: Record<number, { selectedAnswers: Record<number, number>; submitted: boolean }> = {};
+        let quizIdx = 0;
+
+        parsedMessages.forEach((msg, msgIdx) => {
+          if (msg.sender !== 'ai') return;
+          const blocks = parseMessageBlocks(msg.text || '');
+          for (const blk of blocks) {
+            if (blk.type === 'QUIZ_UI' && blk.data && quizIdx < quizSessions.length) {
+              const session = quizSessions[quizIdx];
+              const answers: Record<number, number> = {};
+              if (session.ai_answers) {
+                for (const ans of session.ai_answers as any[]) {
+                  answers[ans.questionIndex] = ans.selectedOptionIndex;
+                }
+              }
+              restoredSubmissions[msgIdx] = {
+                selectedAnswers: answers,
+                submitted: true,
+              };
+              quizIdx++;
+            }
+          }
+        });
+
+        if (Object.keys(restoredSubmissions).length > 0) {
+          setQuizSubmissions(restoredSubmissions);
+        }
+      }
     }
+    setIsLoadingConvo(false);
   };
 
   const handleDeleteThread = async (id: string) => {
@@ -1862,6 +2430,39 @@ export default function AiMentorScreen() {
     }
   } as const;
 
+  const SkeletonBubble = ({ isUser, widthPercent }: { isUser?: boolean; widthPercent: number }) => {
+    const bubbleWidth = (width - 64) * (widthPercent / 100);
+    return (
+      <View style={{
+        alignSelf: isUser ? 'flex-end' : 'flex-start',
+        marginBottom: 12,
+        paddingHorizontal: 16,
+      }}>
+        <View style={{
+          width: bubbleWidth,
+          height: 48,
+          borderRadius: 18,
+          backgroundColor: isUser
+            ? (isDark ? '#1E2022' : '#E5E7EB')
+            : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'),
+        }} />
+      </View>
+    );
+  };
+
+  const ChatSkeleton = () => (
+    <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}>
+      <SkeletonBubble widthPercent={75} />
+      <SkeletonBubble isUser widthPercent={50} />
+      <SkeletonBubble widthPercent={85} />
+      <SkeletonBubble widthPercent={65} />
+      <SkeletonBubble isUser widthPercent={40} />
+      <SkeletonBubble widthPercent={70} />
+      <SkeletonBubble isUser widthPercent={55} />
+      <SkeletonBubble widthPercent={60} />
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       {/* Smooth Background radial glow effect */}
@@ -1880,10 +2481,9 @@ export default function AiMentorScreen() {
           <Menu size={24} color={colors.text} strokeWidth={2} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.modelSelector} onPress={toggleModel}>
-          <Text style={styles.modelText}>{activeModel}</Text>
-          <ChevronDown size={14} color={colors.subText} strokeWidth={2} style={{ marginLeft: 4 }} />
-        </TouchableOpacity>
+        {/* <View style={styles.modelSelector}>
+          <Text style={[styles.modelText, { fontSize: 16, fontWeight: '700' }]}>AI Mentor</Text>
+        </View> */}
 
         <TouchableOpacity style={styles.headerIconBtn} onPress={handleNewChat}>
           <SquarePen size={22} color={colors.text} strokeWidth={2} />
@@ -1897,14 +2497,16 @@ export default function AiMentorScreen() {
             ref={scrollViewRef}
             style={styles.chatArea}
             contentContainerStyle={
-              messages.length === 0
+              (isLoadingConvo || messages.length === 0)
                 ? styles.chatAreaEmptyContent
                 : [styles.chatAreaContent, { paddingBottom: 16 }]
             }
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            {messages.length === 0 ? (
+            {isLoadingConvo ? (
+              <ChatSkeleton />
+            ) : messages.length === 0 ? (
               <View style={styles.emptyStateContainer}>
                 <Animated.View style={[styles.sparkContainer, animatedStarStyle]}>
                   <EnlitenCoreIcon size={64} />
@@ -1915,7 +2517,7 @@ export default function AiMentorScreen() {
               </View>
             ) : (
               messages.map((msg, index) => {
-                const blocks = parseMessageBlocks(msg.text);
+                const blocks = parseMessageBlocks(msg.text || '');
 
                 return (
                   <View key={index} style={[styles.messageRow, msg.sender === 'user' ? styles.userRow : styles.aiRow]}>
@@ -1961,7 +2563,7 @@ export default function AiMentorScreen() {
                                 </Markdown>
                               );
                             } else if (blk.type === 'QUIZ_UI' && blk.data) {
-                              return <GenerativeQuizCard key={bIdx} data={blk.data} messageIndex={index} colors={colors} isDark={isDark} styles={styles} quizSubmissions={quizSubmissions} setQuizSubmissions={setQuizSubmissions} setIsTyping={setIsTyping} setMessages={setMessages} />;
+                              return <GenerativeQuizCard key={bIdx} data={blk.data} messageIndex={index} colors={colors} isDark={isDark} styles={styles} quizSubmissions={quizSubmissions} setQuizSubmissions={setQuizSubmissions} setIsTyping={setIsTyping} setMessages={setMessages} user={user} convoId={convoId} examId={exam?.id} />;
                             } else if (blk.type === 'CHART_UI' && blk.data) {
                               return <GenerativeChartCard key={bIdx} data={blk.data} colors={colors} isDark={isDark} styles={styles} />;
                             } else if (blk.type === 'TIMELINE_UI' && blk.data) {
@@ -1976,7 +2578,7 @@ export default function AiMentorScreen() {
                             return null;
                           })}
 
-                          {/* Sources — Claude style: overlapping favicon circles, opens bottom sheet */}
+                          {/* Sources — Claude style */}
                           {msg.sources && msg.sources.groundingChunks && msg.sources.groundingChunks.length > 0 && (
                             <TouchableOpacity
                               style={styles.sourcesWrapper}
@@ -2002,7 +2604,7 @@ export default function AiMentorScreen() {
                           {msg.followUpQuestions && Array.isArray(msg.followUpQuestions) && msg.followUpQuestions.length > 0 && (
                             <View style={styles.followUpWrapper}>
                               {msg.followUpQuestions.map((fq, fqIdx) => (
-                                <TouchableOpacity key={fqIdx} style={styles.followUpBtn} onPress={() => { setInputText(fq); handleSend(); }}>
+                                <TouchableOpacity key={fqIdx} style={styles.followUpBtn} onPress={() => handleSend(fq)}>
                                   <CornerDownRight size={16} color={colors.subText} style={{ marginRight: 10, marginTop: 2 }} />
                                   <Text style={styles.followUpText}>{fq}</Text>
                                 </TouchableOpacity>
@@ -2017,92 +2619,32 @@ export default function AiMentorScreen() {
               })
             )}
             {isTyping && (
-              <View style={[styles.messageRow, styles.aiRow]}>
-                <View style={styles.aiAvatarWrapper}><EnlitenCoreIcon size={20} /></View>
-                <View style={[styles.messageBubble, styles.typingBubble]}>
-                  <View style={styles.typingDot} />
-                  <View style={[styles.typingDot, { marginHorizontal: 5 }]} />
-                  <View style={styles.typingDot} />
-                </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingLeft: 5, paddingRight: 16 }}>
+                <ClaudeLoadingWave size={20} color={colors.primary} />
+                <View style={{ width: 12 }} />
+                <AnimatedStreamingText color={colors.primary} />
               </View>
             )}
           </ScrollView>
 
 
-
           <View style={[styles.inputWrapper, { paddingBottom: Math.max(insets.bottom, 12), paddingTop: 8 }]}>
-            {/* Attachment Preview Bar */}
-            {hasAttachments && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10, paddingHorizontal: 4 }} contentContainerStyle={{ gap: 10 }}>
-                {pendingAttachments.map((att, idx) => (
-                  <View key={idx} style={{ position: 'relative' }}>
-                    {att.type.startsWith('image/') ? (
-                      <View style={{ width: 100, height: 100, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? '#333' : '#DDD' }}>
-                        <Image source={{ uri: att.uri }} style={{ width: 100, height: 100 }} resizeMode="cover" />
-                        {att.status === 'uploading' && (
-                          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', borderRadius: 14 }}>
-                            <ActivityIndicator size="small" color="#818CF8" />
-                          </View>
-                        )}
-                        {att.status === 'done' && (
-                          <View style={{ position: 'absolute', bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' }}>
-                            <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>✓</Text>
-                          </View>
-                        )}
-                      </View>
-                    ) : (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#1A1A2E' : '#F0F0FF', borderRadius: 14, padding: 10, gap: 8, borderWidth: 1, borderColor: isDark ? '#2A2A3E' : '#E0E0F0', minWidth: 160 }}>
-                        <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: getFileIconColor(att.type), alignItems: 'center', justifyContent: 'center' }}>
-                          {att.status === 'uploading' ? (
-                            <ActivityIndicator size="small" color="#FFF" />
-                          ) : (
-                            <FileText size={20} color="#FFF" />
-                          )}
-                        </View>
-                        <View style={{ flex: 1, maxWidth: 120 }}>
-                          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{att.name}</Text>
-                          <Text style={{ color: colors.subText, fontSize: 11, marginTop: 1 }}>
-                            {formatFileSize(att.size)}{att.status === 'uploading' ? ' Uploading...' : att.status === 'done' ? '' : att.status === 'error' ? ' Failed' : ''}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-                    {/* Remove button */}
-                    <TouchableOpacity
-                      onPress={() => handleRemoveAttachment(idx)}
-                      style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? '#333' : '#999', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
-                    >
-                      <X size={12} color="#FFF" strokeWidth={3} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-            <View style={styles.inputContainer}>
-              <TouchableOpacity style={styles.inputPlusBtn} onPress={() => setShowAttachModal(true)}>
-                <Plus size={22} color={colors.subText} strokeWidth={2} />
-              </TouchableOpacity>
-              <TextInput style={styles.textInput} placeholder="Ask AI Mentor" placeholderTextColor={colors.subText} value={inputText} onChangeText={setInputText} multiline={false} autoFocus={true} onSubmitEditing={handleSend} returnKeyType="send" />
-              {(inputText.trim().length > 0 || allUploaded) ? (
-                <TouchableOpacity
-                  style={[styles.sendIconBtn, isUploading && { opacity: 0.4 }]}
-                  onPress={handleSend}
-                  disabled={isUploading}
-                >
-                  <Send size={20} color="#FFFFFF" strokeWidth={2} />
-                </TouchableOpacity>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <TouchableOpacity onPress={() => Alert.alert('Voice Input', 'Voice mode is coming soon in the next update!')}><Mic size={20} color={colors.subText} strokeWidth={2} /></TouchableOpacity>
-                  <TouchableOpacity style={styles.waveformContainer} onPress={() => Alert.alert('Sound Wave', 'Voice interactive session starting soon!')}>
-                    <View style={[styles.waveformBar, { height: 10 }]} />
-                    <View style={[styles.waveformBar, { height: 18 }]} />
-                    <View style={[styles.waveformBar, { height: 14 }]} />
-                    <View style={[styles.waveformBar, { height: 8 }]} />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+            <ChatInputBar
+              inputText={inputText}
+              setInputText={setInputText}
+              handleSend={handleSend}
+              setShowAttachModal={setShowAttachModal}
+              hasAttachments={hasAttachments}
+              pendingAttachments={pendingAttachments}
+              handleRemoveAttachment={handleRemoveAttachment}
+              allUploaded={allUploaded}
+              isUploading={isUploading}
+              colors={colors}
+              isDark={isDark}
+              insets={insets}
+              webSearchEnabled={webSearchEnabled}
+              setWebSearchEnabled={setWebSearchEnabled}
+            />
           </View>
         </KeyboardAvoidingView>
       ) : (
@@ -2111,14 +2653,16 @@ export default function AiMentorScreen() {
             ref={scrollViewRef}
             style={styles.chatArea}
             contentContainerStyle={
-              messages.length === 0
+              (isLoadingConvo || messages.length === 0)
                 ? styles.chatAreaEmptyContent
                 : [styles.chatAreaContent, { paddingBottom: 16 }]
             }
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            {messages.length === 0 ? (
+            {isLoadingConvo ? (
+              <ChatSkeleton />
+            ) : messages.length === 0 ? (
               <View style={styles.emptyStateContainer}>
                 <Animated.View style={[styles.sparkContainer, animatedStarStyle]}>
                   <EnlitenCoreIcon size={64} />
@@ -2129,7 +2673,7 @@ export default function AiMentorScreen() {
               </View>
             ) : (
               messages.map((msg, index) => {
-                const blocks = parseMessageBlocks(msg.text);
+                const blocks = parseMessageBlocks(msg.text || '');
 
                 return (
                   <View key={index} style={[styles.messageRow, msg.sender === 'user' ? styles.userRow : styles.aiRow]}>
@@ -2175,7 +2719,7 @@ export default function AiMentorScreen() {
                                 </Markdown>
                               );
                             } else if (blk.type === 'QUIZ_UI' && blk.data) {
-                              return <GenerativeQuizCard key={bIdx} data={blk.data} messageIndex={index} colors={colors} isDark={isDark} styles={styles} quizSubmissions={quizSubmissions} setQuizSubmissions={setQuizSubmissions} setIsTyping={setIsTyping} setMessages={setMessages} />;
+                              return <GenerativeQuizCard key={bIdx} data={blk.data} messageIndex={index} colors={colors} isDark={isDark} styles={styles} quizSubmissions={quizSubmissions} setQuizSubmissions={setQuizSubmissions} setIsTyping={setIsTyping} setMessages={setMessages} user={user} convoId={convoId} examId={exam?.id} />;
                             } else if (blk.type === 'CHART_UI' && blk.data) {
                               return <GenerativeChartCard key={bIdx} data={blk.data} colors={colors} isDark={isDark} styles={styles} />;
                             } else if (blk.type === 'TIMELINE_UI' && blk.data) {
@@ -2190,7 +2734,7 @@ export default function AiMentorScreen() {
                             return null;
                           })}
 
-                          {/* Sources — Claude style: overlapping favicon circles, opens bottom sheet */}
+                          {/* Sources — Claude style */}
                           {msg.sources && msg.sources.groundingChunks && msg.sources.groundingChunks.length > 0 && (
                             <TouchableOpacity
                               style={styles.sourcesWrapper}
@@ -2216,7 +2760,7 @@ export default function AiMentorScreen() {
                           {msg.followUpQuestions && Array.isArray(msg.followUpQuestions) && msg.followUpQuestions.length > 0 && (
                             <View style={styles.followUpWrapper}>
                               {msg.followUpQuestions.map((fq, fqIdx) => (
-                                <TouchableOpacity key={fqIdx} style={styles.followUpBtn} onPress={() => { setInputText(fq); handleSend(); }}>
+                                <TouchableOpacity key={fqIdx} style={styles.followUpBtn} onPress={() => handleSend(fq)}>
                                   <CornerDownRight size={16} color={colors.subText} style={{ marginRight: 10, marginTop: 2 }} />
                                   <Text style={styles.followUpText}>{fq}</Text>
                                 </TouchableOpacity>
@@ -2231,89 +2775,31 @@ export default function AiMentorScreen() {
               })
             )}
             {isTyping && (
-              <View style={[styles.messageRow, styles.aiRow]}>
-                <View style={styles.aiAvatarWrapper}><EnlitenCoreIcon size={20} /></View>
-                <View style={[styles.messageBubble, styles.typingBubble]}>
-                  <View style={styles.typingDot} />
-                  <View style={[styles.typingDot, { marginHorizontal: 5 }]} />
-                  <View style={styles.typingDot} />
-                </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingLeft: 5, paddingRight: 16 }}>
+                <ClaudeLoadingWave size={20} color={colors.primary} />
+                <View style={{ width: 12 }} />
+                <AnimatedStreamingText color={colors.primary} />
               </View>
             )}
           </ScrollView>
           <Animated.View style={[styles.inputWrapper, { paddingTop: 8 }, animatedKeyboardStyle]}>
-            {/* Attachment Preview Bar */}
-            {hasAttachments && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10, paddingHorizontal: 4 }} contentContainerStyle={{ gap: 10 }}>
-                {pendingAttachments.map((att, idx) => (
-                  <View key={idx} style={{ position: 'relative' }}>
-                    {att.type.startsWith('image/') ? (
-                      <View style={{ width: 100, height: 100, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? '#333' : '#DDD' }}>
-                        <Image source={{ uri: att.uri }} style={{ width: 100, height: 100 }} resizeMode="cover" />
-                        {att.status === 'uploading' && (
-                          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', borderRadius: 14 }}>
-                            <ActivityIndicator size="small" color="#818CF8" />
-                          </View>
-                        )}
-                        {att.status === 'done' && (
-                          <View style={{ position: 'absolute', bottom: 4, right: 4, width: 18, height: 18, borderRadius: 9, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' }}>
-                            <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>✓</Text>
-                          </View>
-                        )}
-                      </View>
-                    ) : (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#1A1A2E' : '#F0F0FF', borderRadius: 14, padding: 10, gap: 8, borderWidth: 1, borderColor: isDark ? '#2A2A3E' : '#E0E0F0', minWidth: 160 }}>
-                        <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: getFileIconColor(att.type), alignItems: 'center', justifyContent: 'center' }}>
-                          {att.status === 'uploading' ? (
-                            <ActivityIndicator size="small" color="#FFF" />
-                          ) : (
-                            <FileText size={20} color="#FFF" />
-                          )}
-                        </View>
-                        <View style={{ flex: 1, maxWidth: 120 }}>
-                          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{att.name}</Text>
-                          <Text style={{ color: colors.subText, fontSize: 11, marginTop: 1 }}>
-                            {formatFileSize(att.size)}{att.status === 'uploading' ? ' Uploading...' : att.status === 'done' ? '' : att.status === 'error' ? ' Failed' : ''}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-                    {/* Remove button */}
-                    <TouchableOpacity
-                      onPress={() => handleRemoveAttachment(idx)}
-                      style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? '#333' : '#999', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
-                    >
-                      <X size={12} color="#FFF" strokeWidth={3} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-            <View style={styles.inputContainer}>
-              <TouchableOpacity style={styles.inputPlusBtn} onPress={() => setShowAttachModal(true)}>
-                <Plus size={22} color={colors.subText} strokeWidth={2} />
-              </TouchableOpacity>
-              <TextInput ref={androidInputRef} style={styles.textInput} placeholder="Ask AI Mentor" placeholderTextColor={colors.subText} value={inputText} onChangeText={setInputText} multiline={false} onSubmitEditing={handleSend} returnKeyType="send" />
-              {(inputText.trim().length > 0 || allUploaded) ? (
-                <TouchableOpacity
-                  style={[styles.sendIconBtn, isUploading && { opacity: 0.4 }]}
-                  onPress={handleSend}
-                  disabled={isUploading}
-                >
-                  <Send size={20} color="#FFFFFF" strokeWidth={2} />
-                </TouchableOpacity>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <TouchableOpacity onPress={() => Alert.alert('Voice Input', 'Voice mode is coming soon in the next update!')}><Mic size={20} color={colors.subText} strokeWidth={2} /></TouchableOpacity>
-                  <TouchableOpacity style={styles.waveformContainer} onPress={() => Alert.alert('Sound Wave', 'Voice interactive session starting soon!')}>
-                    <View style={[styles.waveformBar, { height: 10 }]} />
-                    <View style={[styles.waveformBar, { height: 18 }]} />
-                    <View style={[styles.waveformBar, { height: 14 }]} />
-                    <View style={[styles.waveformBar, { height: 8 }]} />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+            <ChatInputBar
+              inputText={inputText}
+              setInputText={setInputText}
+              handleSend={handleSend}
+              setShowAttachModal={setShowAttachModal}
+              hasAttachments={hasAttachments}
+              pendingAttachments={pendingAttachments}
+              handleRemoveAttachment={handleRemoveAttachment}
+              allUploaded={allUploaded}
+              isUploading={isUploading}
+              colors={colors}
+              isDark={isDark}
+              insets={insets}
+              androidInputRef={androidInputRef}
+              webSearchEnabled={webSearchEnabled}
+              setWebSearchEnabled={setWebSearchEnabled}
+            />
           </Animated.View>
         </Animated.View>
       )}
@@ -2513,35 +2999,74 @@ export default function AiMentorScreen() {
         </TouchableOpacity>
 
         <ScrollView style={styles.historyList} showsVerticalScrollIndicator={false}>
-          {threads.map((item) => {
-            const isActive = convoId === item.id;
-            const dateStr = new Date(item.created_at).toLocaleDateString();
-            return (
-              <View key={item.id} style={[styles.historyItem, isActive && styles.historyItemActive]}>
-                <TouchableOpacity
-                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-                  onPress={() => handleLoadConvo(item.id)}
-                >
-                  <ClipboardList size={16} color={isActive ? colors.primary : colors.subText} strokeWidth={2} style={{ marginRight: 12 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.historyItemTitle, isActive && styles.historyItemTitleActive]} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.historyItemDate}>{dateStr}</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDeleteThread(item.id)} style={{ padding: 8 }}>
-                  <Trash2 size={16} color={colors.subText} />
-                </TouchableOpacity>
+          {isLoadingThreads ? (
+            Array.from({ length: 6 }).map((_, i) => (
+              <View key={i} style={styles.historyItem}>
+                <View style={{ marginRight: 12, width: 38, height: 38, borderRadius: 10, backgroundColor: colors.border }} />
+                <View style={{ flex: 1 }}>
+                  <View style={{ width: i % 2 === 0 ? '70%' : '85%', height: 14, borderRadius: 7, backgroundColor: colors.border, marginBottom: 6 }} />
+                  <View style={{ width: '40%', height: 10, borderRadius: 5, backgroundColor: colors.border }} />
+                </View>
               </View>
-            );
-          })}
+            ))
+          ) : (
+            threads.map((item) => {
+              const isActive = convoId === item.id;
+              const dateStr = new Date(item.created_at).toLocaleDateString();
+              return (
+                <View key={item.id} style={[styles.historyItem, isActive && styles.historyItemActive]}>
+                  <TouchableOpacity
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                    onPress={() => handleLoadConvo(item.id)}
+                  >
+                    <ClipboardList size={16} color={isActive ? colors.primary : colors.subText} strokeWidth={2} style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.historyItemTitle, isActive && styles.historyItemTitleActive]} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.historyItemDate}>{dateStr}</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteThread(item.id)} style={{ padding: 8 }}>
+                    <Trash2 size={16} color={colors.subText} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
         </ScrollView>
 
         <View style={styles.sidebarFooter}>
           <Text style={styles.sidebarFooterText}>Enliten.ai AI Mentor</Text>
         </View>
       </Animated.View>
+
+      {/* Auto-send Loading Overlay */}
+      <Modal
+        visible={showAutoSendOverlay}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View style={styles.autoSendOverlay}>
+          <View style={[styles.autoSendCard, { backgroundColor: colors.card }]}>
+            <LottieView
+              source={require('@/assets/animations/ai.json')}
+              autoPlay
+              loop
+              style={{ width: 120, height: 120 }}
+            />
+            <RNAnimated.Text
+              style={[
+                styles.autoSendText,
+                { color: colors.text, opacity: textOpacity },
+              ]}
+            >
+              {currentTexts[cyclingTextIndex]}
+            </RNAnimated.Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3113,5 +3638,29 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
     marginLeft: 10,
     fontStyle: 'italic',
-  }
+  },
+  autoSendOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  autoSendCard: {
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 280,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  autoSendText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    textAlign: 'center',
+  },
 });

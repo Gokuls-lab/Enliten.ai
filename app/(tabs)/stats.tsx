@@ -22,7 +22,7 @@ import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ChartBar as BarChart, Calendar, ChevronDown, ChevronUp, Clock, Crown, Target, Trash2, Zap } from 'lucide-react-native'; // Added icons
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming, interpolate } from 'react-native-reanimated';
 import Svg, {
   Path,
   Defs,
@@ -351,6 +351,33 @@ const InteractiveLineChart = ({ data, labels, fullDates, colors }: LineChartProp
 
 
 
+// ─── SHIMMER EFFECT COMPONENT ──────────────────────────────────────────────────
+const ShimmerEffect = ({ width = 120, height = 16, borderRadius = 8 }) => {
+  const shimmerValue = useSharedValue(0);
+
+  useEffect(() => {
+    shimmerValue.value = withRepeat(
+      withTiming(1, { duration: 1500, easing: Easing.linear }),
+      -1,
+      false
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const translateX = interpolate(shimmerValue.value, [0, 1], [-width, width]);
+    return {
+      transform: [{ translateX }],
+      opacity: 0.3,
+    };
+  });
+
+  return (
+    <View style={{ width, height, borderRadius, backgroundColor: 'rgba(128,128,128,0.15)', overflow: 'hidden' }}>
+      <Animated.View style={[{ width: width * 0.5, height: '100%', backgroundColor: 'rgba(255,255,255,0.3)' }, animatedStyle]} />
+    </View>
+  );
+};
+
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -368,22 +395,6 @@ export default function StatsScreen() {
   // UX Improvement: Topic filtering state
   const [topicFilter, setTopicFilter] = useState<'weakest' | 'strongest' | 'all'>('weakest');
   const [showAllTopics, setShowAllTopics] = useState(false);
-
-  // Animated values for entry
-  const opacity = useSharedValue(0);
-  const translateY = useSharedValue(20);
-
-  useEffect(() => {
-    if (!loading) {
-      opacity.value = withTiming(1, { duration: 800 });
-      translateY.value = withTiming(0, { duration: 800, easing: Easing.out(Easing.exp) });
-    }
-  }, [loading]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{ translateY: translateY.value }],
-  }));
 
   const fetchStats = async () => {
     if (!user || !exam) return;
@@ -766,12 +777,76 @@ export default function StatsScreen() {
           </View>
 
           {loading && !refreshing ? (
-            <View style={{ alignItems: 'center', marginTop: 50 }}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={{ color: '#F8FAFC', fontSize: 16, marginTop: 16 }}>Analyzing performance...</Text>
+            <View style={styles.contentContainer}>
+              {/* Skeleton Metric Cards */}
+              <View style={styles.metricsGrid}>
+                {[1, 2, 3, 4].map((i) => (
+                  <View key={i} style={styles.metricCard}>
+                    <View style={[styles.metricIcon, { backgroundColor: colors.card }]}>
+                      <ShimmerEffect width={44} height={44} borderRadius={14} />
+                    </View>
+                    <ShimmerEffect width={60} height={22} borderRadius={4} />
+                    <ShimmerEffect width={80} height={13} borderRadius={4} />
+                  </View>
+                ))}
+              </View>
+
+              {/* Skeleton Adaptive Flashcards Card */}
+              <View style={styles.chartCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                  <ShimmerEffect width={20} height={20} borderRadius={10} />
+                  <View style={{ marginLeft: 10 }}>
+                    <ShimmerEffect width={120} height={16} borderRadius={4} />
+                  </View>
+                </View>
+                <View style={styles.adaptiveContainer}>
+                  <ShimmerEffect width={80} height={80} borderRadius={40} />
+                  <View style={{ alignItems: 'center', marginTop: 16, marginBottom: 16 }}>
+                    <ShimmerEffect width={100} height={24} borderRadius={4} />
+                    <ShimmerEffect width={80} height={14} borderRadius={4} />
+                  </View>
+                  <View style={styles.adaptiveStatsRow}>
+                    <View style={styles.adaptiveStat}>
+                      <ShimmerEffect width={80} height={20} borderRadius={4} />
+                      <ShimmerEffect width={60} height={12} borderRadius={4} />
+                    </View>
+                    <View style={styles.adaptiveDivider} />
+                    <View style={styles.adaptiveStat}>
+                      <ShimmerEffect width={60} height={20} borderRadius={4} />
+                      <ShimmerEffect width={60} height={12} borderRadius={4} />
+                    </View>
+                  </View>
+                  <View style={styles.rankTrack}>
+                    <ShimmerEffect width={width - 80} height={6} borderRadius={3} />
+                  </View>
+                </View>
+              </View>
+
+              {/* Skeleton Weekly Activity Card */}
+              <View style={styles.chartCard}>
+                <ShimmerEffect width={120} height={16} borderRadius={4} />
+                <View style={{ marginTop: 20, minHeight: 220 }}>
+                  <ShimmerEffect width={width - 80} height={200} borderRadius={8} />
+                </View>
+              </View>
+
+              {/* Skeleton Domain Performance Card */}
+              <View style={styles.chartCard}>
+                <ShimmerEffect width={150} height={16} borderRadius={4} />
+                <View style={{ marginTop: 20 }}>
+                  {[1, 2, 3].map((i) => (
+                    <View key={i} style={{ marginBottom: 16 }}>
+                      <ShimmerEffect width={width - 100} height={14} borderRadius={4} />
+                      <View style={{ marginTop: 8 }}>
+                        <ShimmerEffect width={width - 80} height={8} borderRadius={4} />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
             </View>
           ) : (
-            <Animated.View style={[styles.contentContainer, animatedStyle]}>
+            <View style={styles.contentContainer}>
               <View style={styles.metricsGrid}>
                 {/* Metric Cards - Same as before */}
                 <View style={styles.metricCard}>
@@ -964,7 +1039,7 @@ export default function StatsScreen() {
                   })()}
                 </View>
               </View>
-            </Animated.View>
+            </View>
           )}
         </ScrollView>
       </View>
@@ -1035,11 +1110,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     width: '48%',
     borderWidth: 1,
     borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
   },
   metricIcon: {
     width: 44,

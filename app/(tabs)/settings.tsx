@@ -10,7 +10,9 @@ import {
   Text,
   ToastAndroid,
   TouchableOpacity,
-  View
+  View,
+  ActivityIndicator,
+  Animated
 } from 'react-native';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,7 +27,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { Bell, Calendar, ChevronRight, Crown, Globe, CircleHelp as HelpCircle, LogOut, Mail, Moon, Shield, Sun, Trash2, User } from 'lucide-react-native';
+import { Bell, Calendar, ChevronRight, Crown, Globe, CircleHelp as HelpCircle, LogOut, Mail, Moon, Shield, Sun, Trash2, User, Sparkles, RefreshCw } from 'lucide-react-native';
 import { PACKAGE_TYPE } from 'react-native-purchases';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -40,7 +42,7 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 export default function SettingsScreen() {
   const { colors, isDark, toggleTheme } = useTheme();
   const [language, setLanguage] = React.useState('en');
-  const styles = React.useMemo(() => createStyles(colors), [colors]);
+  const styles = React.useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const { user, signOut } = useAuth();
   const { isPro, customerInfo, currentOffering } = useRevenueCat();
   const { exam } = useExam();
@@ -48,9 +50,100 @@ export default function SettingsScreen() {
   const [notifications, setNotifications] = React.useState(true);
   const [soundEffects, setSoundEffects] = React.useState(true);
   const [dailyReminders, setDailyReminders] = React.useState(true);
+  
+  const [usageStatus, setUsageStatus] = React.useState<any>(null);
+  const [loadingUsage, setLoadingUsage] = React.useState(true);
+  const [refreshingUsage, setRefreshingUsage] = React.useState(false);
+
   const NOTIFICATIONS_KEY = 'notifications_enabled';
   const SOUND_KEY = 'sound_effects_enabled';
   const REMINDER_KEY = 'daily_reminders_enabled';
+
+  const fetchUsage = React.useCallback(async (isRefresh = false) => {
+    if (!user?.id) return;
+    if (isRefresh) {
+      setRefreshingUsage(true);
+    } else {
+      setLoadingUsage(true);
+    }
+    try {
+      const { data, error } = await supabase.rpc('get_user_usage_status', { p_user_id: user.id });
+      if (!error && data) {
+        setUsageStatus(data);
+      }
+    } catch (err) {
+      console.error('Error fetching usage', err);
+    } finally {
+      if (isRefresh) {
+        setRefreshingUsage(false);
+      } else {
+        setLoadingUsage(false);
+      }
+    }
+  }, [user]);
+
+  React.useEffect(() => {
+    fetchUsage();
+  }, [fetchUsage]);
+
+  const pulseAnim = React.useRef(new Animated.Value(0.5)).current;
+  const spinAnim = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.5, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, [pulseAnim]);
+
+  React.useEffect(() => {
+    if (refreshingUsage) {
+      Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 1000, useNativeDriver: true })
+      ).start();
+    } else {
+      spinAnim.stopAnimation();
+      spinAnim.setValue(0);
+    }
+  }, [refreshingUsage, spinAnim]);
+
+  const spin = spinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg']
+  });
+
+  const renderSkeleton = () => (
+    <View style={{ gap: 12 }}>
+      {[1, 2].map(i => (
+        <View key={i} style={styles.usageCard}>
+          <View style={styles.usageHeader}>
+            <Animated.View style={{ width: 100, height: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', borderRadius: 8, opacity: pulseAnim }} />
+            <Animated.View style={{ width: 40, height: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', borderRadius: 8, opacity: pulseAnim }} />
+          </View>
+          <Animated.View style={{ height: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', borderRadius: 4, marginVertical: 12, opacity: pulseAnim }} />
+          <Animated.View style={{ width: 150, height: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', borderRadius: 7, opacity: pulseAnim }} />
+        </View>
+      ))}
+    </View>
+  );
+
+  const formatTimeLeft = (resetTimeStr: string | null) => {
+    if (!resetTimeStr) return 'No usage yet';
+    const resetTime = new Date(resetTimeStr).getTime();
+    const now = new Date().getTime();
+    const diff = resetTime - now;
+    
+    if (diff <= 0) return 'Window refreshed';
+    
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (days > 0) return `Resets in ${days}d ${hours}h ${minutes}m`;
+    return `Resets in ${hours} hours ${minutes} minutes`;
+  };
 
   React.useEffect(() => {
     // Load persisted settings
@@ -418,6 +511,56 @@ export default function SettingsScreen() {
             )}
           </View>
 
+          {/* AI Usage Limits Section */}
+          <View style={styles.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>AI Mentor Usage</Text>
+              <TouchableOpacity onPress={() => fetchUsage(true)} disabled={refreshingUsage || loadingUsage} style={{ padding: 4 }}>
+                <Animated.View style={{ opacity: refreshingUsage ? 0.7 : 1, transform: [{ rotate: spin }] }}>
+                  <RefreshCw size={18} color={colors.subText} />
+                </Animated.View>
+              </TouchableOpacity>
+            </View>
+            
+            {loadingUsage ? (
+              renderSkeleton()
+            ) : usageStatus ? (
+              <Animated.View style={{ gap: 12, opacity: refreshingUsage ? 0.6 : 1 }}>
+                {/* 5-Hour / Rolling Usage */}
+                <View style={styles.usageCard}>
+                  <View style={styles.usageHeader}>
+                    <Text style={styles.usageTitle}>Rolling Usage</Text>
+                    <Text style={styles.usagePercentage}>{usageStatus.five_hour.percentage}%</Text>
+                  </View>
+                  <View style={styles.progressBarBg}>
+                    <View style={[styles.progressBarFill, { width: `${usageStatus.five_hour.percentage}%`, backgroundColor: usageStatus.five_hour.percentage >= 100 ? '#EF4444' : '#3B82F6' }]} />
+                  </View>
+                  <Text style={styles.usageNextReset}>
+                    {formatTimeLeft(usageStatus.five_hour.next_reset)}
+                  </Text>
+                </View>
+
+                {/* 7-Day / Weekly Usage */}
+                <View style={styles.usageCard}>
+                  <View style={styles.usageHeader}>
+                    <Text style={styles.usageTitle}>Weekly Usage</Text>
+                    <Text style={styles.usagePercentage}>{usageStatus.seven_day.percentage}%</Text>
+                  </View>
+                  <View style={styles.progressBarBg}>
+                    <View style={[styles.progressBarFill, { width: `${usageStatus.seven_day.percentage}%`, backgroundColor: usageStatus.seven_day.percentage >= 100 ? '#EF4444' : '#3B82F6' }]} />
+                  </View>
+                  <Text style={styles.usageNextReset}>
+                    {formatTimeLeft(usageStatus.seven_day.next_reset)}
+                  </Text>
+                </View>
+              </Animated.View>
+            ) : (
+              <View style={[styles.usageCard, { justifyContent: 'center', alignItems: 'center', paddingVertical: 40 }]}>
+                <Text style={{color: colors.subText}}>Usage info unavailable</Text>
+              </View>
+            )}
+          </View>
+
           {/* Preferences Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Preferences</Text>
@@ -546,7 +689,7 @@ export default function SettingsScreen() {
   );
 }
 
-const createStyles = (colors: any) => StyleSheet.create({
+const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
   container: {
     // paddingTop removed (dynamic)
     flex: 1,
@@ -714,5 +857,53 @@ const createStyles = (colors: any) => StyleSheet.create({
   appCopyright: {
     fontSize: 12,
     color: colors.subText,
+  },
+  usageCard: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  usageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  usageTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  usageCount: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  progressBarBg: {
+    height: 8,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  usageFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  usageNextReset: {
+    fontSize: 13,
+    color: colors.subText,
+  },
+  usagePercentage: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text,
   },
 });

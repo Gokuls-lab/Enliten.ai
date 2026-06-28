@@ -78,8 +78,8 @@ export default function ReviewScreen() {
     try {
       if (reviewMode === 'quiz') {
         // --- QUIZ MODE Logic ---
-        // Get quiz_sessions for user for this exam (capped at 50 most recent)
-        const { data: sessions, error: sessionError } = await supabase
+        // Get regular quiz_sessions for user for this exam (capped at 50 most recent)
+        const { data: regularSessions, error: sessionError } = await supabase
           .from('quiz_sessions')
           .select('id, completed_at')
           .eq('user_id', user.id)
@@ -87,63 +87,109 @@ export default function ReviewScreen() {
           .order('completed_at', { ascending: false })
           .limit(50);
         if (sessionError) throw sessionError;
-        const sessionIds = sessions.map((s: any) => s.id);
-        if (sessionIds.length === 0) {
+
+        // Get AI quiz sessions (quiz_type = 'ai-mentor', no exam_id filter)
+        const { data: aiSessions, error: aiSessionError } = await supabase
+          .from('quiz_sessions')
+          .select('id, completed_at, ai_questions, ai_answers, score, total_questions')
+          .eq('user_id', user.id)
+          .eq('quiz_type', 'ai-mentor')
+          .order('completed_at', { ascending: false })
+          .limit(20);
+        if (aiSessionError) throw aiSessionError;
+
+        const regularSessionIds = (regularSessions || []).map((s: any) => s.id);
+        const aiSessionList = aiSessions || [];
+
+        if (regularSessionIds.length === 0 && aiSessionList.length === 0) {
           setReviewedQuestions([]);
           setLoading(false);
           setRefreshing(false);
           return;
         }
 
-        // Get user_answers for these sessions
-        let answersQuery = supabase
-          .from('user_answers')
-          .select('id, question_id, selected_option_id, is_correct, answered_at, quiz_session_id, questions:question_id (question_text, explanation, difficulty, domain, subject_id), selected_option:selected_option_id (option_text), quiz_sessions:quiz_session_id (completed_at)')
-          .in('quiz_session_id', sessionIds)
-          .order('answered_at', { ascending: false });
+        // Process regular quiz answers
+        let reviewed: any[] = [];
+        if (regularSessionIds.length > 0) {
+          let answersQuery = supabase
+            .from('user_answers')
+            .select('id, question_id, selected_option_id, is_correct, answered_at, quiz_session_id, questions:question_id (question_text, explanation, difficulty, domain, subject_id), selected_option:selected_option_id (option_text), quiz_sessions:quiz_session_id (completed_at)')
+            .in('quiz_session_id', regularSessionIds)
+            .order('answered_at', { ascending: false });
 
-        const { data: answers, error: answerError } = await answersQuery;
-        if (answerError) throw answerError;
+          const { data: answers, error: answerError } = await answersQuery;
+          if (answerError) throw answerError;
 
-        // For each answer, get the correct option
-        const questionIds = [...new Set((answers || []).map((a: any) => a.question_id))];
-        let correctOptionsMap: Record<string, string> = {};
-        if (questionIds.length > 0) {
-          const { data: correctOptions, error: correctOptErr } = await supabase
-            .from('question_options')
-            .select('question_id, option_text')
-            .eq('is_correct', true)
-            .in('question_id', questionIds);
-          if (!correctOptErr && correctOptions) {
-            correctOptionsMap = correctOptions.reduce((acc: any, cur: any) => {
-              acc[cur.question_id] = cur.option_text;
-              return acc;
-            }, {});
+          // For each answer, get the correct option
+          const questionIds = [...new Set((answers || []).map((a: any) => a.question_id))];
+          let correctOptionsMap: Record<string, string> = {};
+          if (questionIds.length > 0) {
+            const { data: correctOptions, error: correctOptErr } = await supabase
+              .from('question_options')
+              .select('question_id, option_text')
+              .eq('is_correct', true)
+              .in('question_id', questionIds);
+            if (!correctOptErr && correctOptions) {
+              correctOptionsMap = correctOptions.reduce((acc: any, cur: any) => {
+                acc[cur.question_id] = cur.option_text;
+                return acc;
+              }, {});
+            }
           }
+
+          // Deduplicate: keep only the most recent answer per question_id
+          const latestByQuestion = new Map();
+          for (const a of (answers || [])) {
+            if (!latestByQuestion.has(a.question_id)) {
+              latestByQuestion.set(a.question_id, a);
+            }
+          }
+
+          // Map to UI format
+          const regularReviewed = Array.from(latestByQuestion.values())
+            .filter((a: any) => a.questions && a.questions.question_text && a.questions.question_text.trim() !== '')
+            .map((a: any) => ({
+              id: a.id,
+              question: a.questions.question_text,
+              userAnswer: a.selected_option?.option_text || '',
+              correctAnswer: correctOptionsMap[a.question_id] || '',
+              isCorrect: a.is_correct,
+              subject: a.questions.domain || 'General',
+              difficulty: a.questions.difficulty || 'Easy',
+              date: a.quiz_sessions?.completed_at?.slice(0, 10) || '',
+              explanation: a.questions.explanation || '',
+              type: 'regular' as const,
+            }));
+          reviewed = [...reviewed, ...regularReviewed];
         }
 
-        // Deduplicate: keep only the most recent answer per question_id
-        const latestByQuestion = new Map();
-        for (const a of (answers || [])) {
-          if (!latestByQuestion.has(a.question_id)) {
-            latestByQuestion.set(a.question_id, a);
-          }
+        // Process AI quiz sessions
+        if (aiSessionList.length > 0) {
+          const aiReviewed = aiSessionList.flatMap((session: any) => {
+            const questions = session.ai_questions || [];
+            const answers = session.ai_answers || [];
+            return answers.map((ans: any, idx: number) => {
+              const q = questions[ans.questionIndex];
+              if (!q) return null;
+              return {
+                id: `${session.id}-${idx}`,
+                question: q.question,
+                userAnswer: q.options[ans.selectedOptionIndex] || '',
+                correctAnswer: q.options[q.correctIndex] || '',
+                isCorrect: ans.isCorrect,
+                subject: 'AI Mentor',
+                difficulty: 'Mixed',
+                date: session.completed_at?.slice(0, 10) || '',
+                explanation: q.explanation || '',
+                type: 'ai-mentor' as const,
+              };
+            }).filter(Boolean);
+          });
+          reviewed = [...reviewed, ...aiReviewed];
         }
 
-        // Map to UI format
-        const reviewed = Array.from(latestByQuestion.values())
-          .filter((a: any) => a.questions && a.questions.question_text && a.questions.question_text.trim() !== '')
-          .map((a: any) => ({
-            id: a.id,
-            question: a.questions.question_text,
-            userAnswer: a.selected_option?.option_text || '',
-            correctAnswer: correctOptionsMap[a.question_id] || '',
-            isCorrect: a.is_correct,
-            subject: a.questions.domain || 'General',
-            difficulty: a.questions.difficulty || 'Easy',
-            date: a.quiz_sessions?.completed_at?.slice(0, 10) || '',
-            explanation: a.questions.explanation || '',
-          }));
+        // Sort by date descending
+        reviewed.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         setReviewedQuestions(reviewed);
 
       } else {

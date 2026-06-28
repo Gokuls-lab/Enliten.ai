@@ -1,16 +1,16 @@
-import SvgIcon from "@/components/svgIcon";
 import { useExam } from '@/contexts/ExamContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
-import { LinearGradient } from "expo-linear-gradient";
-import { ChevronRight, ExternalLink, FileText, Search, X } from 'lucide-react-native';
-import React, { useEffect, useState } from "react";
-import { Alert, Dimensions, Keyboard, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from "react-native";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BookOpen, CheckCircle, ChevronDown, Clock, FileText, Play, Plus, Minus } from 'lucide-react-native';
+import React, { useEffect, useState, useMemo } from "react";
+import { Alert, Dimensions, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import LottieView from 'lottie-react-native';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from 'react-native-svg';
-import { router } from 'expo-router';
-
+import { router, useFocusEffect } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -20,43 +20,221 @@ const hs = (size: number) => (width / guidelineBaseWidth) * size;
 const vs = (size: number) => (height / guidelineBaseHeight) * size;
 const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
-export default function Notes() {
-  const { colors } = useTheme();
-  const styles = React.useMemo(() => createStyles(colors), [colors]);
+// Soft background colors for subject initials
+const SOFT_COLORS = [
+  '#E3F2FD', '#F3E5F5', '#E8F5E9', '#FFF3E0', '#FCE4EC',
+  '#E0F7FA', '#F1F8E9', '#FFF8E1', '#FBE9E7', '#EDE7F6',
+];
+
+// Generate consistent color from subject name
+const getSubjectColor = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return SOFT_COLORS[Math.abs(hash) % SOFT_COLORS.length];
+};
+
+// Subject Initial Fallback Component
+const SubjectInitial = ({ name, size = 44 }: { name: string; size?: number }) => {
+  const initial = name?.charAt(0)?.toUpperCase() || 'S';
+  const bgColor = getSubjectColor(name || 'Subject');
+  return (
+    <View style={{
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      backgroundColor: bgColor,
+      justifyContent: 'center',
+      alignItems: 'center',
+    }}>
+      <Text style={{
+        fontSize: size * 0.45,
+        fontWeight: '700',
+        color: '#555',
+      }}>{initial}</Text>
+    </View>
+  );
+};
+
+export default function Learn() {
+  const { colors, isDark } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
-  const { exam } = useExam();
+  const { exam, subject, setSubject } = useExam();
   const [files, setFiles] = useState<any[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedNote, setSelectedNote] = useState<any | null>(null);
+  const [progress, setProgress] = useState<Record<string, boolean>>({});
+  const [user, setUser] = useState<any>(null);
+  const [unitExpanded, setUnitExpanded] = useState(true);
+  const [questionCount, setQuestionCount] = useState(0);
+  const [isTargeted, setIsTargeted] = useState(false);
+
+  const TARGETS_STORAGE_KEY = 'user_subject_targets';
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUser(data?.user));
+  }, []);
+
+  // Load targets and check if current subject is targeted (syncs on focus)
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadTargets = async () => {
+        try {
+          const stored = await AsyncStorage.getItem(TARGETS_STORAGE_KEY);
+          if (stored && subject) {
+            const targets = JSON.parse(stored);
+            setIsTargeted(targets.some((t: any) => t.id === subject.id));
+          } else {
+            setIsTargeted(false);
+          }
+        } catch (e) {
+          console.error('Error loading targets:', e);
+        }
+      };
+      loadTargets();
+    }, [subject])
+  );
+
+  const addToTargets = async () => {
+    if (!subject) return;
+    try {
+      const stored = await AsyncStorage.getItem(TARGETS_STORAGE_KEY);
+      const targets = stored ? JSON.parse(stored) : [];
+      
+      // Check if already exists
+      if (targets.some((t: any) => t.id === subject.id)) return;
+      
+      const newTarget = {
+        id: subject.id,
+        name: subject.name,
+        image_url: subject.image_url || null,
+        totalLessons: files.length,
+        addedAt: new Date().toISOString(),
+      };
+      
+      targets.push(newTarget);
+      await AsyncStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(targets));
+      setIsTargeted(true);
+    } catch (e) {
+      console.error('Error adding target:', e);
+    }
+  };
+
+  const removeFromTargets = async () => {
+    if (!subject) return;
+    try {
+      const stored = await AsyncStorage.getItem(TARGETS_STORAGE_KEY);
+      if (!stored) return;
+      
+      const targets = JSON.parse(stored);
+      const updated = targets.filter((t: any) => t.id !== subject.id);
+      await AsyncStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(updated));
+      setIsTargeted(false);
+    } catch (e) {
+      console.error('Error removing target:', e);
+    }
+  };
 
   useEffect(() => {
     const loadResourcesAndFiles = async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('file_resource_exams')
-        .select(`
-              *,
-              file_resources (*)
-            `)
-        .eq('exam_id', exam.id);
 
-      if (error) {
-        console.error('Failed to load resources and files:', error);
-        setLoading(false);
-        return;
+      let currentSubject = subject;
+      if (!currentSubject) {
+        const { data: subjects } = await supabase.from('subjects').select('*').order('name', { ascending: true }).limit(1);
+        if (subjects && subjects.length > 0) {
+          currentSubject = subjects[0];
+          setSubject(currentSubject);
+        }
       }
 
-      setFiles(data.map((d: any) => d.file_resources));
+      if (exam) {
+        // Fetch files for exam
+        let query = supabase
+          .from('file_resource_exams')
+          .select(`
+                *,
+                file_resources (*)
+              `)
+          .eq('exam_id', exam.id);
+
+        const { data, error } = await query;
+        if (!error && data) {
+          let loadedFiles = data.map((d: any) => d.file_resources).filter((f: any) => f != null);
+
+          if (currentSubject) {
+            // filter by subject_id 
+            loadedFiles = loadedFiles.filter((f: any) => !f.subject_id || f.subject_id === currentSubject.id);
+          }
+
+          // sort by order_index
+          loadedFiles.sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0));
+          setFiles(loadedFiles);
+
+          // load progress
+          if (user) {
+            const { data: progData } = await supabase.from('user_note_progress').select('*').eq('user_id', user.id);
+            const progMap: Record<string, boolean> = {};
+            if (progData) {
+              progData.forEach((p: any) => { progMap[p.file_resource_id] = p.is_read; });
+            }
+            setProgress(progMap);
+          }
+
+          // Fetch question count for this subject
+          if (currentSubject) {
+            const { count } = await supabase
+              .from('questions')
+              .select('*', { count: 'exact', head: true })
+              .eq('subject_id', currentSubject.id);
+            setQuestionCount(count || 0);
+          }
+        }
+      }
       setLoading(false);
     };
 
     loadResourcesAndFiles();
-  }, [exam]);
+  }, [exam, subject, user]);
+
+  const toggleReadStatus = async (fileId: string, currentStatus: boolean) => {
+    if (!user) return;
+    const newStatus = !currentStatus;
+
+    // Optimistic update
+    setProgress(prev => ({ ...prev, [fileId]: newStatus }));
+
+    if (newStatus) {
+      const { error } = await supabase.from('user_note_progress').upsert(
+        {
+          user_id: user.id,
+          file_resource_id: fileId,
+          is_read: true,
+        },
+        { onConflict: 'user_id,file_resource_id' }
+      );
+      if (error) {
+        console.error('[toggleReadStatus] upsert error:', error);
+        // Revert optimistic update on failure
+        setProgress(prev => ({ ...prev, [fileId]: currentStatus }));
+      }
+    } else {
+      const { error } = await supabase
+        .from('user_note_progress')
+        .delete()
+        .match({ user_id: user.id, file_resource_id: fileId });
+      if (error) {
+        console.error('[toggleReadStatus] delete error:', error);
+        // Revert optimistic update on failure
+        setProgress(prev => ({ ...prev, [fileId]: currentStatus }));
+      }
+    }
+  };
 
   function getFileExtension(fileName: string): string | null {
-    const parts = fileName.split('.');
-    if (parts.length > 1 && parts[parts.length - 1]) {
+    const parts = fileName?.split('.');
+    if (parts && parts.length > 1 && parts[parts.length - 1]) {
       return parts.pop()?.toLowerCase() || null;
     }
     return null;
@@ -69,9 +247,6 @@ export default function Notes() {
     } else {
       url = file.file_url;
     }
-
-    // Close modal if open
-    setSelectedNote(null);
 
     const isPdf = file.resource_type === 'file' && file.file_name && getFileExtension(file.file_name) === 'pdf';
 
@@ -92,355 +267,501 @@ export default function Notes() {
     }
   };
 
+  const startQuiz = () => {
+    router.push({
+      pathname: '/quiz/[mode]',
+      params: { mode: 'notes_quiz', subject_id: subject?.id }
+    });
+  };
 
-  const filteredFiles = files.filter(file =>
-    file.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    file.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Determine which item is the "active" (currently in-progress) one
+  const getItemState = (index: number) => {
+    const file = files[index];
+    const isRead = progress[file?.id] || false;
+    const isFirst = index === 0;
+    const isUnlocked = isFirst || progress[files[index - 1]?.id];
+    const isActive = isUnlocked && !isRead; // Currently working on this one
+    return { isRead, isUnlocked, isActive };
+  };
+
+  // Check if an item is a "practice sheet" type
+  const isPracticeSheet = (file: any) => {
+    return file.title?.toLowerCase().includes('practice') ||
+      file.title?.toLowerCase().includes('quiz') ||
+      file.title?.toLowerCase().includes('mcq');
+  };
 
   return (
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Notes</Text>
-          <Text style={styles.subtitle}>Your Study Materials</Text>
-        </View>
-
-        <View style={styles.searchContainer}>
-          <Search size={20} color={colors.subText} style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search notes..."
-            placeholderTextColor={colors.subText}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
+      {/* ── HEADER ── */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.subjectPill} onPress={() => router.push('/subject-selection')}>
+          <BookOpen size={18} color={colors.text} strokeWidth={2} />
+          <Text style={styles.subjectPillText} numberOfLines={1}>
+            {subject ? subject.name : 'Select Subject'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.statsBtn}>
+          <LottieView
+            source={require('@/assets/animations/Bar chart.json')}
+            autoPlay
+            loop
+            style={{ width: 42, height: 42, backgroundColor: 'transparent' }}
+            resizeMode="contain"
           />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchQuery(''); Keyboard.dismiss(); }}>
-              <X size={20} color={colors.subText} />
-            </TouchableOpacity>
-          )}
-        </View>
+        </TouchableOpacity>
+      </View>
 
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+      >
+        {/* ── UNIT CARD ── */}
+        <TouchableOpacity
+          style={styles.unitCard}
+          activeOpacity={0.8}
+          onPress={() => setUnitExpanded(!unitExpanded)}
+        >
+          <View style={styles.unitCardTop}>
+            {/* Unit Icon – circular image placeholder */}
+            <View style={styles.unitIconWrap}>
+              {subject?.image_url ? (
+                <Image
+                  source={{ uri: subject.image_url }}
+                  style={styles.unitIconImage}
+                  onError={(e) => {
+                    // Image failed to load, will show fallback
+                  }}
+                />
+              ) : (
+                <SubjectInitial name={subject?.name || 'Subject'} size={44} />
+              )}
+            </View>
+            <View style={styles.unitCardInfo}>
+              <Text style={styles.unitTitle}>
+                {subject ? subject.name : 'Subject'}
+              </Text>
+              <Text style={styles.unitSubtitle}>
+                {/* Unit 1 · {files.length} lessons */}
+                {files.length} lessons
+              </Text>
+            </View>
+            <Animated.View style={[
+              styles.chevronWrap,
+              unitExpanded && { transform: [{ rotate: '0deg' }] }
+            ]}>
+              <ChevronDown size={20} color={colors.subText} strokeWidth={2} />
+            </Animated.View>
+          </View>
+          {/* Blue action bar */}
+          <TouchableOpacity
+            style={[styles.unitActionBar, isTargeted && styles.unitActionBarTargeted]}
+            activeOpacity={0.8}
+            onPress={(e) => {
+              if (isTargeted) {
+                removeFromTargets();
+              } else {
+                addToTargets();
+              }
+            }}
+          >
+            <Text style={styles.actionBarText}>
+              {isTargeted ? 'Added to targets' : 'Add to targets'}
+            </Text>
+            <View style={[styles.addBtn, isTargeted && styles.removeBtn]}>
+              {isTargeted ? (
+                <>
+                  <Minus size={14} color="#FFF" strokeWidth={3} />
+                  <Text style={styles.addBtnText}>Remove</Text>
+                </>
+              ) : (
+                <>
+                  <Plus size={14} color="#FFF" strokeWidth={3} />
+                  <Text style={styles.addBtnText}>Add</Text>
+                </>
+              )}
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+
+        {/* ── TIMELINE ── */}
         {loading ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 40 }}>
             <SpinnerAnimation color={colors.primary} />
           </View>
-        ) : (
-          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 90, paddingHorizontal: 20 }}>
-            {filteredFiles.length > 0 ? (
-              filteredFiles.map((file: any) => (
-                <TouchableOpacity
-                  key={file.id}
-                  onPress={() => setSelectedNote(file)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.noteCard}>
-                    <View style={styles.iconContainer}>
-                      {file.resource_type === "file" ? (
-                        // If SvgIcon handles extensions well, keep it, otherwise fallback
-                        <SvgIcon width={vs(40)} height={vs(40)} iconName={getFileExtension(file.file_name) || 'unknown'} />
-                      ) : file.resource_type === "youtube_link" ? (
-                        <SvgIcon width={vs(40)} height={vs(40)} iconName='yt' />
-                      ) : (
-                        <FileText size={32} color={colors.primary} />
-                      )}
-                    </View>
+        ) : unitExpanded ? (
+          <View style={styles.timelineWrap}>
+            {files.map((file, index) => {
+              const { isRead, isUnlocked, isActive } = getItemState(index);
+              const isPractice = isPracticeSheet(file);
+              const isLast = index === files.length - 1;
 
-                    <View style={styles.noteTextContainer}>
-                      <Text style={styles.noteTitle} numberOfLines={1}>{file.title}</Text>
-                      <Text style={styles.noteDescription} numberOfLines={2}>{file.description}</Text>
-                      <View style={styles.metaContainer}>
-                        <Text style={styles.metaText}>
-                          {file.resource_type === 'youtube_link' ? 'Video Resource' : `${getFileExtension(file.file_name)?.toUpperCase() || 'FILE'}`}
-                        </Text>
-                      </View>
-                    </View>
+              return (
+                <View key={file.id} style={styles.timelineRow}>
+                  {/* Vertical connector line — always show (connects to quiz node at end) */}
+                  <View style={[
+                    styles.connectorLine,
+                    isRead && { backgroundColor: colors.primary + '40' }
+                  ]} />
 
-                    <ChevronRight size={20} color={colors.subText} style={{ opacity: 0.5 }} />
-                  </View>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <View style={styles.emptyState}>
-                <FileText size={64} color={colors.subText} style={{ opacity: 0.5, marginBottom: 16 }} />
-                <Text style={styles.emptyStateTitle}>No notes found</Text>
-                <Text style={styles.emptyStateSubtitle}>
-                  {searchQuery ? "Try a different search term" : "Check back later for new materials"}
-                </Text>
-              </View>
-            )}
-          </ScrollView>
-        )}
-
-        {/* Detail Modal */}
-        <Modal
-          visible={!!selectedNote}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => setSelectedNote(null)}
-        >
-          <View style={styles.modalOverlay}>
-            <TouchableWithoutFeedback onPress={() => setSelectedNote(null)}>
-              <View style={styles.modalBackdrop} />
-            </TouchableWithoutFeedback>
-
-            {selectedNote && (
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <View style={styles.modalIconContainer}>
-                    {selectedNote.resource_type === "file" ? (
-                      <SvgIcon width={vs(50)} height={vs(50)} iconName={getFileExtension(selectedNote.file_name) || 'unknown'} />
-                    ) : selectedNote.resource_type === "youtube_link" ? (
-                      <SvgIcon width={vs(50)} height={vs(50)} iconName='yt' />
+                  {/* Node circle */}
+                  <View style={[
+                    styles.nodeCircle,
+                    isRead && styles.nodeCompleted,
+                    isActive && !isPractice && styles.nodeActive,
+                    isPractice && isUnlocked && !isRead && styles.nodePractice,
+                    !isUnlocked && styles.nodeLocked,
+                  ]}>
+                    {isRead ? (
+                      <CheckCircle size={22} color={colors.primary} strokeWidth={2.5} />
+                    ) : isActive && !isPractice ? (
+                      <Clock size={20} color="#E8910A" strokeWidth={2.5} />
+                    ) : isPractice && isUnlocked ? (
+                      <FileText size={20} color={colors.primary} strokeWidth={2} />
                     ) : (
-                      <FileText size={40} color={colors.primary} />
+                      <Text style={styles.nodeNumber}>{index + 1}</Text>
                     )}
                   </View>
-                  <TouchableOpacity onPress={() => setSelectedNote(null)} style={styles.closeButton}>
-                    <X size={24} color={colors.text} />
-                  </TouchableOpacity>
-                </View>
 
-                <ScrollView style={styles.modalBody}>
-                  <Text style={styles.modalTitle}>{selectedNote.title}</Text>
-                  <View style={styles.modalMetaRow}>
-                    <View style={styles.metaContainer}>
-                      <Text style={styles.metaText}>
-                        {selectedNote.resource_type === 'youtube_link' ? 'Video Resource' : `${getFileExtension(selectedNote.file_name)?.toUpperCase() || 'FILE'}`}
+                  {/* Content + Mark as read */}
+                  <TouchableOpacity
+                    style={[styles.rowContent, !isUnlocked && { opacity: 0.4 }]}
+                    activeOpacity={isUnlocked ? 0.6 : 1}
+                    disabled={!isUnlocked}
+                    onPress={() => {
+                      if (isPractice) {
+                        startQuiz();
+                      } else {
+                        handleOpenLink(file);
+                      }
+                    }}
+                  >
+                    <View style={styles.rowTextWrap}>
+                      <Text style={[
+                        styles.rowTitle,
+                        isRead && { color: colors.primary },
+                        isActive && !isPractice && { color: '#E8910A' },
+                        !isUnlocked && { color: colors.subText },
+                      ]}>
+                        {file.title}
+                      </Text>
+                      <Text style={styles.rowDuration}>
+                        {isPractice
+                          ? (file.description || '8 MCQs')
+                          : (file.description || '10m')
+                        }
                       </Text>
                     </View>
-                  </View>
-                  <Text style={styles.modalDescription}>{selectedNote.description}</Text>
-                </ScrollView>
 
-                <View style={styles.modalFooter}>
-                  <TouchableOpacity
-                    style={styles.openButton}
-                    onPress={() => handleOpenLink(selectedNote)}
-                  >
-                    <LinearGradient
-                      colors={[colors.primary, '#8A2BE2']}
-                      style={styles.gradientButton}
-                    >
-                      <Text style={styles.openButtonText}>Open Resource</Text>
-                      <ExternalLink size={20} color="#FFF" />
-                    </LinearGradient>
+                    {/* Mark as read button */}
+                    {isUnlocked && !isPractice && (
+                      <TouchableOpacity
+                        style={[
+                          styles.markReadBtn,
+                          isRead && styles.markReadBtnDone,
+                        ]}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          toggleReadStatus(file.id, isRead);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={[
+                          styles.markReadText,
+                          isRead && { color: colors.primary },
+                        ]}>
+                          {isRead ? 'Completed' : 'Mark as read'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </TouchableOpacity>
                 </View>
+              );
+            })}
+
+            {/* ── QUIZ NODE at end ── */}
+            {files.length > 0 && (
+              <View style={styles.timelineRow}>
+                {/* No connector after quiz node */}
+                <View style={[
+                  styles.nodeCircle,
+                  styles.nodeQuiz,
+                  // Only enable quiz if all files are read
+                  files.every(f => progress[f.id]) && styles.nodeQuizReady,
+                ]}>
+                  <Play size={20} color={files.every(f => progress[f.id]) ? '#FFF' : colors.subText} strokeWidth={2.5} />
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.rowContent,
+                    !files.every(f => progress[f.id]) && { opacity: 0.4 },
+                  ]}
+                  activeOpacity={0.6}
+                  disabled={!files.every(f => progress[f.id])}
+                  onPress={startQuiz}
+                >
+                  <View style={styles.rowTextWrap}>
+                    <Text style={[
+                      styles.rowTitle,
+                      files.every(f => progress[f.id]) && { color: colors.primary },
+                    ]}>
+                      Start Quiz
+                    </Text>
+                    <Text style={styles.rowDuration}>
+                      {questionCount} MCQs · {subject?.name || 'Subject'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               </View>
             )}
           </View>
-        </Modal>
-
-      </View>
+        ) : null}
+      </ScrollView>
     </LinearGradient>
   );
 }
 
-const createStyles = (colors: any) => StyleSheet.create({
+const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
+  // ── CONTAINER ──
   container: {
-    width: '100%',
     flex: 1,
   },
-
   scrollView: {
     flex: 1,
   },
+
+  // ── HEADER ──
   header: {
-    marginTop: 20,
-    marginBottom: 20,
-    paddingHorizontal: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: colors.subText,
-  },
-  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
-    borderRadius: 12,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 24,
-    marginHorizontal: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  searchIcon: {
-    marginRight: 12,
-  },
-  searchInput: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 16,
-  },
-  noteCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  iconContainer: {
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-    backgroundColor: colors.background, // Subtle contrast
-    borderRadius: 10,
-  },
-  noteTextContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  noteTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  noteDescription: {
-    fontSize: 14,
-    color: colors.subText,
-    marginBottom: 6,
-    lineHeight: 20,
-  },
-  metaContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  metaText: {
-    fontSize: 12,
-    color: colors.primary,
-    fontWeight: '600',
-    backgroundColor: colors.inputBg,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: vs(80),
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 8,
-  },
-  emptyStateSubtitle: {
-    fontSize: 16,
-    color: colors.subText,
-    textAlign: 'center',
-  },
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modalContent: {
-    width: '90%',
-    maxHeight: '80%',
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 24,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-  modalIconContainer: {
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-    borderRadius: 16,
-  },
-  closeButton: {
-    padding: 8,
-    backgroundColor: colors.inputBg,
-    borderRadius: 12,
-  },
-  modalBody: {
-    marginBottom: 24,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.text,
-    marginBottom: 12,
-    lineHeight: 28,
-  },
-  modalMetaRow: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  modalDescription: {
-    fontSize: 16,
-    color: colors.subText,
-    lineHeight: 24,
-  },
-  modalFooter: {
-    marginTop: 'auto',
-  },
-  openButton: {
-    width: '100%',
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  gradientButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: 10,
     gap: 12,
   },
-  openButtonText: {
-    fontSize: 18,
+  subjectPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: isDark ? '#1A1A22' : '#F0F0F5',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: isDark ? '#2A2A35' : '#E0E0E5',
+    gap: 10,
+  },
+  subjectPillText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+  },
+  statsBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: isDark ? '#1A1A22' : '#F0F0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: isDark ? '#2A2A35' : '#E0E0E5',
+  },
+
+  // ── UNIT CARD ──
+  unitCard: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 24,
+    borderRadius: 18,
+    backgroundColor: isDark ? '#151519' : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: isDark ? '#252530' : '#E5E7EB',
+    overflow: 'hidden',
+  },
+  unitCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  unitIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+    backgroundColor: isDark ? '#2A2A35' : '#E5E7EB',
+  },
+  unitIconImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  unitCardInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  unitTitle: {
+    color: colors.text,
+    fontSize: 17,
     fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  unitSubtitle: {
+    color: colors.subText,
+    fontSize: 13,
+    marginTop: 3,
+    letterSpacing: 0.1,
+  },
+  chevronWrap: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // ── BLUE ACTION BAR ──
+  unitActionBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#2563EB', // Exact blue from the image
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  unitActionBarTargeted: {
+    backgroundColor: '#DC2626', // Soft red when targeted
+  },
+  actionBarText: {
     color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 0.2,
+  },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  removeBtn: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  addBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // ── TIMELINE ──
+  timelineWrap: {
+    paddingLeft: 30,
+    paddingRight: 20,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 72,
+    position: 'relative',
+  },
+  connectorLine: {
+    position: 'absolute',
+    left: 23,
+    top: 36,
+    bottom: -36,
+    width: 2,
+    backgroundColor: isDark ? '#252530' : '#E0E0E5',
+    zIndex: 0,
+  },
+
+  // ── NODE CIRCLES ──
+  nodeCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: isDark ? '#1A1A22' : '#F0F0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+    borderWidth: 2,
+    borderColor: isDark ? '#2A2A35' : '#E0E0E5',
+  },
+  nodeCompleted: {
+    backgroundColor: isDark ? colors.primary + '18' : colors.primary + '10',
+    borderColor: colors.primary,
+    borderWidth: 2.5,
+  },
+  nodeActive: {
+    backgroundColor: isDark ? 'rgba(232, 145, 10, 0.12)' : 'rgba(232, 145, 10, 0.1)',
+    borderColor: '#E8910A',
+    borderWidth: 2.5,
+  },
+  nodePractice: {
+    backgroundColor: isDark ? 'rgba(37, 99, 235, 0.12)' : 'rgba(37, 99, 235, 0.08)',
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+  nodeLocked: {
+    backgroundColor: isDark ? '#131318' : '#F5F5F8',
+    borderColor: isDark ? '#1E1E26' : '#DDDDE3',
+    borderWidth: 1.5,
+  },
+  nodeQuiz: {
+    backgroundColor: isDark ? '#1A1A22' : '#F0F0F5',
+    borderColor: isDark ? '#2A2A35' : '#E0E0E5',
+  },
+  nodeQuizReady: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  nodeNumber: {
+    color: colors.subText,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  // ── ROW TEXT ──
+  rowContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 16,
+    paddingVertical: 14,
+  },
+  rowTextWrap: {
+    flex: 1,
+  },
+  rowTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 3,
+  },
+  rowDuration: {
+    color: colors.subText,
+    fontSize: 13,
+    fontWeight: '400',
+  },
+
+  // ── MARK AS READ BUTTON ──
+  markReadBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: isDark ? '#2A2A35' : '#E0E0E5',
+    marginLeft: 8,
+  },
+  markReadBtnDone: {
+    borderColor: colors.primary + '40',
+    backgroundColor: colors.primary + '10',
+  },
+  markReadText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.subText,
   },
 });
 

@@ -123,6 +123,7 @@ function AppContent() {
         <Stack.Screen name="exam-selection" />
         <Stack.Screen name="quiz" />
         <Stack.Screen name="flashcards" options={{ headerShown: false }} />
+        <Stack.Screen name="mock-interview" options={{ headerShown: true, title: 'Mock Interview', animation: 'slide_from_right', headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.text, headerTitleStyle: { fontWeight: '700' } }} />
         <Stack.Screen name="pdf-viewer" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="update" options={{ gestureEnabled: false }} />
 

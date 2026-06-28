@@ -19,6 +19,7 @@ import Animated, {
   FadeInUp,
   FadeInRight,
   useAnimatedStyle,
+  useAnimatedProps,
   useSharedValue,
   withRepeat,
   withSpring,
@@ -32,7 +33,7 @@ import Animated, {
 import Svg, { Circle, Defs, LinearGradient as SvgLinearGradient, Stop, Path } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   ChartBar as BarChart,
   Bell,
@@ -49,8 +50,6 @@ import {
   TrendingUp,
   X,
   Bot,
-  ShoppingBag,
-  Camera,
   Quote,
   Sparkles,
   Zap,
@@ -59,6 +58,9 @@ import {
   Play,
   Infinity,
   Sparkle,
+  PhoneCall,
+  FileText,
+  Newspaper,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LottieView from 'lottie-react-native';
@@ -70,6 +72,43 @@ const guidelineBaseHeight = 812;
 const hs = (size: number) => (width / guidelineBaseWidth) * size;
 const vs = (size: number) => (height / guidelineBaseHeight) * size;
 
+// Soft background colors for subject initials
+const SOFT_COLORS = [
+  '#E3F2FD', '#F3E5F5', '#E8F5E9', '#FFF3E0', '#FCE4EC',
+  '#E0F7FA', '#F1F8E9', '#FFF8E1', '#FBE9E7', '#EDE7F6',
+];
+
+// Generate consistent color from subject name
+const getSubjectColor = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return SOFT_COLORS[Math.abs(hash) % SOFT_COLORS.length];
+};
+
+// Subject Initial Fallback Component
+const SubjectInitial = ({ name, size = 48 }: { name: string; size?: number }) => {
+  const initial = name?.charAt(0)?.toUpperCase() || 'S';
+  const bgColor = getSubjectColor(name || 'Subject');
+  return (
+    <View style={{
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      backgroundColor: bgColor,
+      justifyContent: 'center',
+      alignItems: 'center',
+    }}>
+      <Text style={{
+        fontSize: size * 0.45,
+        fontWeight: '700',
+        color: '#555',
+      }}>{initial}</Text>
+    </View>
+  );
+};
+
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
@@ -77,6 +116,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
 import { prefetchOfflineBank } from '@/utils/offlineSync';
+import EvaluateMainModal from '@/components/EvaluateMainModal';
 
 const today = new Date();
 
@@ -107,12 +147,21 @@ const QUIZ_MODES = [
 ];
 
 // ─── QUICK TOOLS ────────────────────────────────────────────────────────────
-const QUICK_TOOLS = [
-  { id: 'ai_mentor', title: 'AI Mentor', desc: 'Your smart tutor', icon: Bot, gradient: ['#6366F1', '#8B5CF6'], live: true },
-  { id: 'doubt_solver', title: 'Scan Doubt', desc: 'Photo to solution', icon: Camera, gradient: ['#10B981', '#06B6D4'], new: true },
-  { id: 'study_planner', title: 'Study Plan', desc: 'AI-powered schedule', icon: Calendar, gradient: ['#F59E0B', '#EF4444'], new: true },
-  { id: 'digital_store', title: 'Resources', desc: 'Guides & tests', icon: ShoppingBag, gradient: ['#EC4899', '#F97316'], badge: 'PRO' },
-];
+const QUICK_TOOLS: Array<{
+  id: string;
+  title: string;
+  desc: string;
+  icon: any;
+  gradient: [string, string];
+  live?: boolean;
+  new?: boolean;
+  badge?: string;
+}> = [
+    { id: 'ai_mentor', title: 'AI Mentor', desc: 'Your smart tutor', icon: Bot, gradient: ['#6366F1', '#8B5CF6'], live: false },
+    { id: 'daily_news', title: 'Daily News', desc: 'Current affairs', icon: Newspaper, gradient: ['#3B82F6', '#8B5CF6'], new: false },
+    { id: 'evaluate_main', title: 'Evaluate Mains', desc: 'AI answer evaluation', icon: FileText, gradient: ['#F59E0B', '#EF4444'], new: true },
+    { id: 'mock_interview', title: 'Mock Interview', desc: 'TNPSC call practice', icon: PhoneCall, gradient: ['#EC4899', '#F97316'], live: false },
+  ];
 
 function enrichModesFromLocal(fetchedModes: any[]): any[] {
   return fetchedModes.map(fetched => {
@@ -275,7 +324,7 @@ const CircularProgress = ({ percentage, size = 80, strokeWidth = 6, color = '#63
     animatedPercentage.value = withTiming(percentage, { duration: 1500, easing: Easing.out(Easing.cubic) });
   }, [percentage]);
 
-  const animatedStyle = useAnimatedStyle(() => {
+  const animatedProps = useAnimatedProps(() => {
     const strokeDashoffset = circumference - (animatedPercentage.value / 100) * circumference;
     return { strokeDashoffset };
   });
@@ -299,7 +348,7 @@ const CircularProgress = ({ percentage, size = 80, strokeWidth = 6, color = '#63
           strokeDasharray={circumference}
           strokeLinecap="round"
           fill="none"
-          animatedProps={animatedStyle}
+          animatedProps={animatedProps}
         />
       </Svg>
       <View style={{ justifyContent: 'center', alignItems: 'center' }}>{children}</View>
@@ -364,6 +413,12 @@ export default function StudyScreen() {
   const [expandedNotifications, setExpandedNotifications] = useState<string[]>([]);
   const [examProgress, setExamProgress] = useState({ total: 0, correct: 0, loading: true });
   const [quoteIndex] = useState(() => Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length));
+  const [isEvaluateModalVisible, setIsEvaluateModalVisible] = useState(false);
+
+  // Target subjects state
+  const TARGETS_STORAGE_KEY = 'user_subject_targets';
+  const [targets, setTargets] = useState<any[]>([]);
+  const [targetProgress, setTargetProgress] = useState<Record<string, { total: number; completed: number }>>({});
 
   // Animation values
   const headerBgOpacity = useSharedValue(0);
@@ -491,6 +546,89 @@ export default function StudyScreen() {
     fetchNotifications();
   }, []);
 
+  // Load target subjects and fetch their progress
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadTargets = async () => {
+        try {
+          const stored = await AsyncStorage.getItem(TARGETS_STORAGE_KEY);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            setTargets(parsed);
+            
+            // Fetch progress for each target
+            if (parsed.length > 0 && user && exam) {
+              const progressMap: Record<string, { total: number; completed: number }> = {};
+              
+              // Get all file resources for the exam
+              const { data: fileExams } = await supabase
+                .from('file_resource_exams')
+                .select('*, file_resources(*)')
+                .eq('exam_id', exam.id);
+
+              if (fileExams) {
+                const allFiles = fileExams
+                  .map((d: any) => d.file_resources)
+                  .filter((f: any) => f != null);
+
+                // Get user's read progress
+                const { data: progData } = await supabase
+                  .from('user_note_progress')
+                  .select('file_resource_id')
+                  .eq('user_id', user.id);
+                
+                const readIds = new Set(progData?.map((p: any) => p.file_resource_id) || []);
+
+                // Calculate progress for each target
+                for (const target of parsed) {
+                  const subjectFiles = allFiles.filter((f: any) => f.subject_id === target.id);
+                  const total = subjectFiles.length;
+                  const completed = subjectFiles.filter((f: any) => readIds.has(f.id)).length;
+                  progressMap[target.id] = { total, completed };
+                }
+                
+                setTargetProgress(progressMap);
+                
+                // Auto-remove completed targets
+                const completedTargets = parsed.filter((t: any) => {
+                  const prog = progressMap[t.id];
+                  return prog && prog.total > 0 && prog.completed === prog.total;
+                });
+                
+                if (completedTargets.length > 0) {
+                  const remaining = parsed.filter((t: any) => {
+                    const prog = progressMap[t.id];
+                    return !(prog && prog.total > 0 && prog.completed === prog.total);
+                  });
+                  setTargets(remaining);
+                  await AsyncStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(remaining));
+                }
+              }
+            }
+          } else {
+            setTargets([]);
+          }
+        } catch (e) {
+          console.error('Error loading targets:', e);
+        }
+      };
+      
+      loadTargets();
+    }, [user, exam])
+  );
+
+  const removeTarget = async (targetId: string) => {
+    try {
+      const stored = await AsyncStorage.getItem(TARGETS_STORAGE_KEY);
+      const currentTargets = stored ? JSON.parse(stored) : [];
+      const updated = currentTargets.filter((t: any) => t.id !== targetId);
+      setTargets(updated);
+      await AsyncStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Error removing target:', e);
+    }
+  };
+
   const toggleExpandNotification = async (id: string) => {
     let newReadIds = [...readNotificationIds];
     if (!readNotificationIds.includes(id)) {
@@ -532,10 +670,9 @@ export default function StudyScreen() {
 
   const handleShortcut = (shortcut: any) => {
     if (shortcut.id === 'ai_mentor') router.push('/ai-mentor');
-    else if (shortcut.id === 'digital_store') router.push('/subscription');
-    else if (shortcut.id === 'doubt_solver' || shortcut.id === 'study_planner') {
-      Alert.alert(shortcut.title, `${shortcut.title} is coming in the next update! 🚀`, [{ text: 'Got it!', style: 'default' }]);
-    }
+    else if (shortcut.id === 'mock_interview') router.push('/mock-interview');
+    else if (shortcut.id === 'evaluate_main') setIsEvaluateModalVisible(true);
+    else if (shortcut.id === 'daily_news') router.push('/news');
   };
 
   // Animated styles
@@ -556,7 +693,7 @@ export default function StudyScreen() {
       <BlurView intensity={Platform.OS === 'ios' ? 60 : 90} tint={isDark ? 'dark' : 'light'} style={[styles.topNav, { paddingTop: insets.top + 4 }]}>
         <View style={styles.topNavContent}>
           {/* Left section: Avatar + Logo */}
-          <Animated.View entering={FadeInLeft.delay(200)} style={styles.navLeft}>
+          <View style={styles.navLeft}>
             <View style={styles.avatarWrapper}>
               {user?.avatar_url ? (
                 <Image source={{ uri: user.avatar_url }} style={[styles.userAvatar, isPro && styles.userAvatarPro]} />
@@ -576,10 +713,10 @@ export default function StudyScreen() {
             <Text style={[styles.logoText, { color: colors.text }]}>
               Enliten<Text style={{ color: colors.primary }}>.ai</Text>
             </Text>
-          </Animated.View>
+          </View>
 
           {/* Right actions */}
-          <Animated.View entering={FadeInRight.delay(300)} style={styles.navActions}>
+          <View style={styles.navActions}>
             {/* Streak pill */}
             <TouchableOpacity activeOpacity={0.8} style={styles.streakPill}>
               <LottieView source={require('@/assets/animations/Fire Streak Orange.json')} autoPlay loop style={styles.streakAnim} />
@@ -593,7 +730,7 @@ export default function StudyScreen() {
               </Animated.View>
               {unreadCount > 0 && <View style={styles.notificationBadge} />}
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         </View>
       </BlurView>
 
@@ -604,12 +741,12 @@ export default function StudyScreen() {
         contentContainerStyle={{ paddingTop: insets.top + 60, paddingBottom: insets.bottom + 100, paddingHorizontal: 20 }}
       >
         {/* ─── HERO SECTION ─── */}
-        <Animated.View entering={FadeInDown.duration(700).delay(100)} style={styles.heroSection}>
+        <View style={styles.heroSection}>
           <View style={styles.heroLeft}>
             <Text style={styles.heroGreeting}>{getGreeting()}</Text>
-            <Animated.Text entering={FadeInLeft.duration(600).delay(200)} style={styles.heroName}>
+            <Text style={styles.heroName}>
               {user?.full_name ? user.full_name.split(' ')[0] : 'Learner'}
-            </Animated.Text>
+            </Text>
             {exam && (
               <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/exam-selection')} style={styles.examBadge}>
                 <Target size={12} color="#0EA5E9" />
@@ -618,10 +755,10 @@ export default function StudyScreen() {
               </TouchableOpacity>
             )}
           </View>
-        </Animated.View>
+        </View>
 
         {/* ─── MINIMALIST QUOTE ─── */}
-        <Animated.View entering={FadeInUp.duration(700).delay(150)} style={styles.quoteWrapper}>
+        <View style={styles.quoteWrapper}>
           <View style={styles.minimalQuoteContainer}>
             <View style={styles.minimalQuoteContentRow}>
               <Quote size={28} color="#3B82F6" strokeWidth={3} style={styles.minimalQuoteIcon} />
@@ -635,81 +772,159 @@ export default function StudyScreen() {
               </Animated.View>
             </View>
           </View>
-        </Animated.View>
+        </View>
 
         {/* ─── PROGRESS DASHBOARD ─── */}
-        {!examProgress.loading && examProgress.total > 0 && (
-          <Animated.View entering={FadeInDown.duration(700).delay(250)}>
-            <SpringCard onPress={() => router.push('/profile')} style={styles.progressCard}>
-              <LinearGradient colors={[colors.card, colors.card]} style={styles.progressCardInner}>
-                <View style={styles.progressHeader}>
-                  <View style={styles.progressTitleRow}>
-                    <View style={styles.progressIconContainer}>
+        {(examProgress.loading || examProgress.total > 0) && (
+          <SpringCard onPress={() => router.push('/profile')} style={styles.progressCard}>
+            <LinearGradient colors={[colors.card, colors.card]} style={styles.progressCardInner}>
+              <View style={styles.progressHeader}>
+                <View style={styles.progressTitleRow}>
+                  <View style={styles.progressIconContainer}>
+                    {examProgress.loading ? (
+                      <ShimmerEffect width={62} height={62} borderRadius={16} />
+                    ) : (
                       <LottieView source={require('@/assets/animations/read book.json')} autoPlay loop style={styles.progressLottieAnim} />
-                    </View>
-                    <View>
-                      <Text style={styles.progressTitleText}>Practice Progress</Text>
-                      <Text style={styles.progressSubtitleText}>{exam?.short_name || 'Your Exam'}</Text>
-                    </View>
+                    )}
                   </View>
+                  <View>
+                    {examProgress.loading ? (
+                      <ShimmerEffect width={120} height={16} borderRadius={4} />
+                    ) : (
+                      <>
+                        <Text style={styles.progressTitleText}>Practice Progress</Text>
+                        <Text style={styles.progressSubtitleText}>{exam?.short_name || 'Your Exam'}</Text>
+                      </>
+                    )}
+                  </View>
+                </View>
+                {examProgress.loading ? (
+                  <ShimmerEffect width={70} height={70} borderRadius={35} />
+                ) : (
                   <CircularProgress percentage={progressPercentage} size={70} strokeWidth={5} color={colors.primary}>
                     <Text style={styles.progressPercentText}>{Math.round(progressPercentage)}%</Text>
                   </CircularProgress>
-                </View>
-
-                <View style={styles.progressStatsRow}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{examProgress.correct}</Text>
-                    <Text style={styles.statLabel}>Completed</Text>
-                  </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{examProgress.total - examProgress.correct}</Text>
-                    <Text style={styles.statLabel}>Remaining</Text>
-                  </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{examProgress.total}</Text>
-                    <Text style={styles.statLabel}>Total</Text>
-                  </View>
-                </View>
-
-                {!isPro && (
-                  <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/subscription')} style={styles.upgradeBanner}>
-                    <Crown size={14} color="#F59E0B" />
-                    <Text style={styles.upgradeBannerText}>Unlock all questions & premium modes</Text>
-                    <ChevronRight size={14} color="#F59E0B" />
-                  </TouchableOpacity>
                 )}
-              </LinearGradient>
-            </SpringCard>
-          </Animated.View>
+              </View>
+
+              <View style={styles.progressStatsRow}>
+                <View style={styles.statItem}>
+                  {examProgress.loading ? (
+                    <ShimmerEffect width={40} height={22} borderRadius={4} />
+                  ) : (
+                    <Text style={styles.statValue}>{examProgress.correct}</Text>
+                  )}
+                  <Text style={styles.statLabel}>Completed</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statItem}>
+                  {examProgress.loading ? (
+                    <ShimmerEffect width={40} height={22} borderRadius={4} />
+                  ) : (
+                    <Text style={styles.statValue}>{examProgress.total - examProgress.correct}</Text>
+                  )}
+                  <Text style={styles.statLabel}>Remaining</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statItem}>
+                  {examProgress.loading ? (
+                    <ShimmerEffect width={40} height={22} borderRadius={4} />
+                  ) : (
+                    <Text style={styles.statValue}>{examProgress.total}</Text>
+                  )}
+                  <Text style={styles.statLabel}>Total</Text>
+                </View>
+              </View>
+
+              {!examProgress.loading && !isPro && (
+                <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/subscription')} style={styles.upgradeBanner}>
+                  <Crown size={14} color="#F59E0B" />
+                  <Text style={styles.upgradeBannerText}>Unlock all questions & premium modes</Text>
+                  <ChevronRight size={14} color="#F59E0B" />
+                </TouchableOpacity>
+              )}
+            </LinearGradient>
+          </SpringCard>
         )}
 
         {/* ─── NO PROGRESS - SHOW PREMIUM CTA ─── */}
         {!isPro && examProgress.loading === false && examProgress.total === 0 && (
-          <Animated.View entering={FadeInDown.duration(700).delay(250)}>
-            <SpringCard onPress={() => router.push('/subscription')} style={styles.premiumCtaCard}>
-              <LinearGradient colors={['rgba(245,158,11,0.15)', 'rgba(245,158,11,0.05)']} style={styles.premiumCtaInner}>
-                <View style={styles.premiumCtaContent}>
-                  <View style={styles.premiumCtaIcon}>
-                    <Crown size={28} color="#F59E0B" />
-                  </View>
-                  <View style={styles.premiumCtaText}>
-                    <Text style={styles.premiumCtaTitle}>Start Your Journey</Text>
-                    <Text style={styles.premiumCtaSubtitle}>Unlock all quiz modes & features</Text>
-                  </View>
-                  <View style={styles.premiumCtaArrow}>
-                    <ChevronRight size={22} color="#F59E0B" />
-                  </View>
+          <SpringCard onPress={() => router.push('/subscription')} style={styles.premiumCtaCard}>
+            <LinearGradient colors={['rgba(245,158,11,0.15)', 'rgba(245,158,11,0.05)']} style={styles.premiumCtaInner}>
+              <View style={styles.premiumCtaContent}>
+                <View style={styles.premiumCtaIcon}>
+                  <Crown size={28} color="#F59E0B" />
                 </View>
-              </LinearGradient>
-            </SpringCard>
-          </Animated.View>
+                <View style={styles.premiumCtaText}>
+                  <Text style={styles.premiumCtaTitle}>Start Your Journey</Text>
+                  <Text style={styles.premiumCtaSubtitle}>Unlock all quiz modes & features</Text>
+                </View>
+                <View style={styles.premiumCtaArrow}>
+                  <ChevronRight size={22} color="#F59E0B" />
+                </View>
+              </View>
+            </LinearGradient>
+          </SpringCard>
+        )}
+
+        {/* ─── TARGET SUBJECTS ─── */}
+        {targets.length > 0 && (
+          <View style={styles.targetsSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>My Targets</Text>
+              <View style={styles.sectionAccent} />
+            </View>
+            {targets.map((target) => {
+              const prog = targetProgress[target.id];
+              const total = prog?.total || target.totalLessons || 0;
+              const completed = prog?.completed || 0;
+              const remaining = total - completed;
+              const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+              return (
+                <TouchableOpacity
+                  key={target.id}
+                  onPress={() => {
+                    router.push('/(tabs)/notes');
+                  }}
+                  style={[styles.targetCard, { borderColor: colors.border }]}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.targetCardRow}>
+                    <View style={styles.targetImageWrap}>
+                      {target.image_url ? (
+                        <Image source={{ uri: target.image_url }} style={styles.targetImage} />
+                      ) : (
+                        <SubjectInitial name={target.name} size={48} />
+                      )}
+                    </View>
+                    <View style={styles.targetInfo}>
+                      <Text style={styles.targetName} numberOfLines={1}>{target.name}</Text>
+                      <Text style={styles.targetLessons}>{total} lessons</Text>
+                      <View style={styles.targetProgressBar}>
+                        <View style={[styles.targetProgressFill, { width: `${percentage}%` }]} />
+                      </View>
+                      <View style={styles.targetProgressText}>
+                        <Text style={styles.targetCompleted}>{completed} completed</Text>
+                        <Text style={styles.targetRemaining}>{remaining} left</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.targetRemoveBtn}
+                      onPress={() => removeTarget(target.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <X size={16} color={colors.subText} strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         )}
 
         {/* ─── QUICK TOOLS GRID ─── */}
-        <Animated.View entering={FadeInDown.duration(700).delay(350)}>
+        <View>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Quick Tools</Text>
             <View style={styles.sectionAccent} />
@@ -719,7 +934,7 @@ export default function StudyScreen() {
             {QUICK_TOOLS.map((tool, index) => {
               const IconComponent = tool.icon;
               return (
-                <Animated.View key={tool.id} entering={FadeInUp.duration(500).delay(400 + index * 80)} style={styles.toolCardWrapper}>
+                <View key={tool.id} style={styles.toolCardWrapper}>
                   <SpringCard onPress={() => handleShortcut(tool)} style={[styles.toolCard, { borderColor: tool.gradient[0] + '30' }]}>
                     <LinearGradient colors={[tool.gradient[0] + '12', tool.gradient[0] + '03']} style={styles.toolCardInner}>
                       <View style={styles.toolHeader}>
@@ -747,14 +962,14 @@ export default function StudyScreen() {
                       <Text style={styles.toolDesc}>{tool.desc}</Text>
                     </LinearGradient>
                   </SpringCard>
-                </Animated.View>
+                </View>
               );
             })}
           </View>
-        </Animated.View>
+        </View>
 
         {/* ─── QUIZ MODES ─── */}
-        <Animated.View entering={FadeInDown.duration(700).delay(500)} style={styles.quizModesSection}>
+        <View style={styles.quizModesSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Quiz Modes</Text>
             <View style={styles.sectionAccent} />
@@ -775,7 +990,7 @@ export default function StudyScreen() {
             if (!mode.is_active) return null;
 
             return (
-              <Animated.View key={mode.id} entering={FadeInLeft.duration(500).delay(550 + index * 60)}>
+              <View key={mode.id}>
                 <SpringCard onPress={() => handleQuizMode(mode)} style={[styles.quizModeCard, { backgroundColor: colors.card, borderColor: colors.border }]} noShadow>
                   <View style={styles.quizModeRow}>
                     <View style={[styles.quizModeIconContainer, { backgroundColor: mode.color + '15' }]}>
@@ -804,14 +1019,14 @@ export default function StudyScreen() {
                     )}
                   </View>
                 </SpringCard>
-              </Animated.View>
+              </View>
             );
           })}
-        </Animated.View>
+        </View>
       </ScrollView>
 
       {/* ─── FLOATING AI MENTOR BUTTON ─── */}
-      <Animated.View entering={FadeInUp.duration(500).delay(800)} style={[styles.fabContainer, { bottom: insets.bottom + 90 }]}>
+      <View style={[styles.fabContainer, { bottom: insets.bottom + 90 }]}>
         <Animated.View style={[styles.fabGlow, glowAnimatedStyle]} />
         <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/ai-mentor')} style={styles.fabTouchable}>
           <LinearGradient
@@ -834,7 +1049,7 @@ export default function StudyScreen() {
             <Animated.View style={[styles.fabShine, shineAnimatedStyle]} />
           </LinearGradient>
         </TouchableOpacity>
-      </Animated.View>
+      </View>
 
       {/* ─── NOTIFICATIONS MODAL ─── */}
       <Modal visible={isNotificationsModalVisible} transparent animationType="slide" onRequestClose={() => setIsNotificationsModalVisible(false)}>
@@ -877,6 +1092,9 @@ export default function StudyScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ─── EVALUATE MAINS MODAL ─── */}
+      <EvaluateMainModal visible={isEvaluateModalVisible} onClose={() => setIsEvaluateModalVisible(false)} />
     </View>
   );
 }
@@ -1379,6 +1597,85 @@ const createStyles = (colors: any, isDark: boolean) =>
     // Loading
     loadingContainer: {
       paddingVertical: 10,
+    },
+
+    // Target Subjects
+    targetsSection: {
+      marginBottom: 24,
+    },
+    targetCard: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      borderWidth: 1,
+      marginBottom: 12,
+      overflow: 'hidden',
+    },
+    targetCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 16,
+    },
+    targetImageWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      overflow: 'hidden',
+      backgroundColor: colors.inputBg,
+    },
+    targetImage: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+    },
+    targetInfo: {
+      flex: 1,
+      marginLeft: 14,
+    },
+    targetName: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    targetLessons: {
+      fontSize: 12,
+      color: colors.subText,
+      marginBottom: 8,
+    },
+    targetProgressBar: {
+      height: 6,
+      backgroundColor: colors.inputBg,
+      borderRadius: 3,
+      overflow: 'hidden',
+      marginBottom: 6,
+    },
+    targetProgressFill: {
+      height: '100%',
+      backgroundColor: colors.primary,
+      borderRadius: 3,
+    },
+    targetProgressText: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    targetCompleted: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: colors.primary,
+    },
+    targetRemaining: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: colors.subText,
+    },
+    targetRemoveBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: colors.inputBg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginLeft: 8,
     },
 
     // Modal

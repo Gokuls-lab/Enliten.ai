@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/contexts/ThemeContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -7,6 +8,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Dimensions,
   FlatList,
   Modal,
@@ -47,7 +49,8 @@ const { width, height } = Dimensions.get('window');
 const hs = (n: number) => (width / 375) * n;
 const vs = (n: number) => (height / 812) * n;
 
-const API_BASE = 'https://enliten-admin-web.vercel.app';
+const API_BASE_PRODUCTION = 'https://enliten-admin-web.vercel.app';
+const API_BASE_DEV = 'http://10.107.103.1:8080/';
 const BRAND = '#9B2335';
 
 // ─── MCQ Banner ──────────────────────────────────────────────────────────────
@@ -104,11 +107,10 @@ function MCQBanner({ date, colors, isDark }: { date: string; colors: any; isDark
 
 const bannerStyles = StyleSheet.create({
   card: {
-    borderRadius: 16, borderWidth: 1.5,
+    borderRadius: 20, borderWidth: 1.5,
     padding: 16, marginBottom: 16,
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    shadowColor: '#9B2335', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08, shadowRadius: 8, elevation: 3,
+    overflow: 'hidden',
   },
   title: { fontSize: 15, fontWeight: '800', marginBottom: 3 },
   sub: { fontSize: 12, lineHeight: 17 },
@@ -307,9 +309,9 @@ function GSTags({ tags, relevance, category }: { tags?: string[]; relevance?: st
 }
 
 // ─── News Card ────────────────────────────────────────────────────────────────
-function NewsCard({ item, index, total, onPress, colors, isDark }: {
+function NewsCard({ item, index, total, onPress, colors, isDark, isRead }: {
   item: NewsItem; index: number; total: number;
-  onPress: () => void; colors: any; isDark: boolean;
+  onPress: () => void; colors: any; isDark: boolean; isRead: boolean;
 }) {
   const catColor = CATEGORY_COLORS[item.category || ''] || '#6B7280';
   return (
@@ -321,6 +323,11 @@ function NewsCard({ item, index, total, onPress, colors, isDark }: {
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
           <GSTags tags={item.gs_tags} relevance={item.exam_relevance} category={item.category} />
+          {isRead && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <CheckCircle size={14} color={colors.success} />
+            </View>
+          )}
         </View>
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '700', lineHeight: 21, marginBottom: 6 }}
           numberOfLines={2}>
@@ -341,18 +348,19 @@ function NewsCard({ item, index, total, onPress, colors, isDark }: {
 }
 
 // ─── Article Detail View ──────────────────────────────────────────────────────
-function ArticleDetail({ item, nextItem, index, total, onBack, onNext, colors, isDark, insets }: {
+function ArticleDetail({ item, nextItem, index, total, onBack, onNext, colors, isDark, insets, isRead, isLiked, isDisliked, onToggleRead, onToggleLike, onToggleDislike }: {
   item: NewsItem; nextItem?: NewsItem; index: number; total: number;
   onBack: () => void; onNext: () => void;
   colors: any; isDark: boolean; insets: any;
+  isRead: boolean; isLiked: boolean; isDisliked: boolean;
+  onToggleRead: () => void; onToggleLike: () => void; onToggleDislike: () => void;
 }) {
-  const [markedRead, setMarkedRead] = useState(false);
   const catColor = CATEGORY_COLORS[item.category || ''] || '#6B7280';
 
   const handleShare = async () => {
     try {
       await Share.share({ message: `${item.title}\n\n${item.content}` });
-    } catch {}
+    } catch { }
   };
 
   // Parse content into highlight + detail sentences
@@ -361,7 +369,7 @@ function ArticleDetail({ item, nextItem, index, total, onBack, onNext, colors, i
   const details = sentences.slice(Math.min(2, sentences.length));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={{ flex: 1 }}>
       {/* Header */}
       <BlurView
         intensity={Platform.OS === 'ios' ? 60 : 90}
@@ -468,11 +476,11 @@ function ArticleDetail({ item, nextItem, index, total, onBack, onNext, colors, i
         tint={isDark ? 'dark' : 'light'}
         style={[styles.articleActionBar, { paddingBottom: insets.bottom + 8 }]}
       >
-        <TouchableOpacity style={styles.actionIconBtn}>
-          <ThumbsUp size={20} color={colors.subText} />
+        <TouchableOpacity style={styles.actionIconBtn} onPress={onToggleLike}>
+          <ThumbsUp size={20} color={isLiked ? colors.success : colors.subText} fill={isLiked ? colors.success : 'transparent'} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionIconBtn}>
-          <ThumbsDown size={20} color={colors.subText} />
+        <TouchableOpacity style={styles.actionIconBtn} onPress={onToggleDislike}>
+          <ThumbsDown size={20} color={isDisliked ? '#EF4444' : colors.subText} fill={isDisliked ? '#EF4444' : 'transparent'} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionIconBtn}>
           <Download size={20} color={colors.subText} />
@@ -481,16 +489,16 @@ function ArticleDetail({ item, nextItem, index, total, onBack, onNext, colors, i
           <Share2 size={20} color={colors.subText} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setMarkedRead(true)}
-          style={[styles.markReadBtn, { borderColor: markedRead ? colors.success : colors.primary }]}
+          onPress={onToggleRead}
+          style={[styles.markReadBtn, { borderColor: isRead ? colors.success : colors.primary }]}
         >
-          <CheckCircle size={14} color={markedRead ? colors.success : colors.primary} />
-          <Text style={{ color: markedRead ? colors.success : colors.primary, fontSize: 12, fontWeight: '600', marginLeft: 5 }}>
-            {markedRead ? 'READ' : 'MARK AS READ'}
+          <CheckCircle size={14} color={isRead ? colors.success : colors.primary} fill={isRead ? colors.success : 'transparent'} />
+          <Text style={{ color: isRead ? colors.success : colors.primary, fontSize: 12, fontWeight: '600', marginLeft: 5 }}>
+            {isRead ? 'READ' : 'MARK AS READ'}
           </Text>
         </TouchableOpacity>
       </BlurView>
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -515,6 +523,117 @@ export default function NewsScreen() {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [mcqAnswers, setMcqAnswers] = useState<Record<number, number>>({});
+
+  // Persistent state for read/liked/disliked articles
+  const [readArticles, setReadArticles] = useState<Set<string>>(new Set());
+  const [likedArticles, setLikedArticles] = useState<Set<string>>(new Set());
+  const [dislikedArticles, setDislikedArticles] = useState<Set<string>>(new Set());
+
+  // Load persistent states from AsyncStorage
+  useEffect(() => {
+    const loadPersistentStates = async () => {
+      try {
+        const [readStr, likedStr, dislikedStr] = await Promise.all([
+          AsyncStorage.getItem('news_read_articles'),
+          AsyncStorage.getItem('news_liked_articles'),
+          AsyncStorage.getItem('news_disliked_articles'),
+        ]);
+        if (readStr) setReadArticles(new Set(JSON.parse(readStr)));
+        if (likedStr) setLikedArticles(new Set(JSON.parse(likedStr)));
+        if (dislikedStr) setDislikedArticles(new Set(JSON.parse(dislikedStr)));
+      } catch (e) {
+        console.error('[News] Error loading persistent states:', e);
+      }
+    };
+    loadPersistentStates();
+  }, []);
+
+  // Save read articles to AsyncStorage
+  const saveReadArticles = async (articles: Set<string>) => {
+    try {
+      await AsyncStorage.setItem('news_read_articles', JSON.stringify(Array.from(articles)));
+    } catch (e) {
+      console.error('[News] Error saving read articles:', e);
+    }
+  };
+
+  // Save liked articles to AsyncStorage
+  const saveLikedArticles = async (articles: Set<string>) => {
+    try {
+      await AsyncStorage.setItem('news_liked_articles', JSON.stringify(Array.from(articles)));
+    } catch (e) {
+      console.error('[News] Error saving liked articles:', e);
+    }
+  };
+
+  // Save disliked articles to AsyncStorage
+  const saveDislikedArticles = async (articles: Set<string>) => {
+    try {
+      await AsyncStorage.setItem('news_disliked_articles', JSON.stringify(Array.from(articles)));
+    } catch (e) {
+      console.error('[News] Error saving disliked articles:', e);
+    }
+  };
+
+  // Toggle read status
+  const toggleReadArticle = (articleKey: string) => {
+    const newRead = new Set(readArticles);
+    if (newRead.has(articleKey)) {
+      newRead.delete(articleKey);
+    } else {
+      newRead.add(articleKey);
+    }
+    setReadArticles(newRead);
+    saveReadArticles(newRead);
+  };
+
+  // Toggle like status
+  const toggleLikeArticle = (articleKey: string) => {
+    const newLiked = new Set(likedArticles);
+    const newDisliked = new Set(dislikedArticles);
+    
+    if (newLiked.has(articleKey)) {
+      newLiked.delete(articleKey);
+    } else {
+      newLiked.add(articleKey);
+      newDisliked.delete(articleKey);
+    }
+    
+    setLikedArticles(newLiked);
+    setDislikedArticles(newDisliked);
+    saveLikedArticles(newLiked);
+    saveDislikedArticles(newDisliked);
+  };
+
+  // Toggle dislike status
+  const toggleDislikeArticle = (articleKey: string) => {
+    const newLiked = new Set(likedArticles);
+    const newDisliked = new Set(dislikedArticles);
+    
+    if (newDisliked.has(articleKey)) {
+      newDisliked.delete(articleKey);
+    } else {
+      newDisliked.add(articleKey);
+      newLiked.delete(articleKey);
+    }
+    
+    setLikedArticles(newLiked);
+    setDislikedArticles(newDisliked);
+    saveLikedArticles(newLiked);
+    saveDislikedArticles(newDisliked);
+  };
+
+  // Handle back button when viewing an article
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (articleIndex !== null) {
+        setArticleIndex(null);
+        return true;
+      }
+      return false;
+    });
+    return () => backHandler.remove();
+  }, [articleIndex]);
 
   // Fetch all records (limited) to know which dates have news
   const fetchNews = useCallback(async () => {
@@ -651,11 +770,16 @@ export default function NewsScreen() {
     }
   };
 
+  // Helper to generate unique key for article
+  const getArticleKey = (item: NewsItem) => `${item.date}_${item.title}`;
+
   // Article detail view
   if (articleIndex !== null && newsItems[articleIndex]) {
+    const currentItem = newsItems[articleIndex];
+    const currentKey = getArticleKey(currentItem);
     return (
       <ArticleDetail
-        item={newsItems[articleIndex]}
+        item={currentItem}
         nextItem={newsItems[articleIndex + 1]}
         index={articleIndex}
         total={newsItems.length}
@@ -664,12 +788,18 @@ export default function NewsScreen() {
         colors={colors}
         isDark={isDark}
         insets={insets}
+        isRead={readArticles.has(currentKey)}
+        isLiked={likedArticles.has(currentKey)}
+        isDisliked={dislikedArticles.has(currentKey)}
+        onToggleRead={() => toggleReadArticle(currentKey)}
+        onToggleLike={() => toggleLikeArticle(currentKey)}
+        onToggleDislike={() => toggleDislikeArticle(currentKey)}
       />
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
       {/* Header */}
       <BlurView
         intensity={Platform.OS === 'ios' ? 60 : 90}
@@ -781,6 +911,7 @@ export default function NewsScreen() {
               onPress={() => setArticleIndex(index)}
               colors={colors}
               isDark={isDark}
+              isRead={readArticles.has(getArticleKey(item))}
             />
           )}
           contentContainerStyle={{
@@ -808,7 +939,7 @@ export default function NewsScreen() {
           activeOpacity={1}
         />
       )}
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -830,9 +961,8 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   newsCard: {
-    borderRadius: 16, borderWidth: 1, padding: 16, marginBottom: 12,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
+    borderRadius: 20, borderWidth: 1, padding: 16, marginBottom: 12,
+    overflow: 'hidden',
   },
   articleHeader: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50,
